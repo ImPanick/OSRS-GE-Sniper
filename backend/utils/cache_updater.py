@@ -15,7 +15,9 @@ import os
 from datetime import datetime
 
 BASE_URL = "https://prices.runescape.wiki/api/v1/osrs/mapping"
-CACHE_FILE = "item_cache.json"
+# Get the directory where this script is located
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_FILE = os.path.join(SCRIPT_DIR, "item_cache.json")
 USER_AGENT = "OSRS-Sniper-CacheUpdater/1.0"
 UPDATE_INTERVAL = 6 * 60 * 60  # 6 hours in seconds
 

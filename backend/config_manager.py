@@ -47,10 +47,28 @@ DEFAULT_CONFIG = {
 }
 
 def get_config(guild_id: str) -> Dict:
-    path = f"{CONFIG_DIR}/{guild_id}.json"
+    """Get server configuration with path sanitization"""
+    # Sanitize guild_id to prevent path traversal
+    if not guild_id or not isinstance(guild_id, str):
+        return DEFAULT_CONFIG.copy()
+    
+    # Discord IDs are numeric, 17-19 digits
+    import re
+    if not re.match(r'^\d{17,19}$', guild_id):
+        return DEFAULT_CONFIG.copy()
+    
+    # Use safe path joining
+    path = os.path.join(CONFIG_DIR, f"{guild_id}.json")
+    # Ensure path is within CONFIG_DIR (prevent directory traversal)
+    if not os.path.abspath(path).startswith(os.path.abspath(CONFIG_DIR)):
+        return DEFAULT_CONFIG.copy()
+    
     if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
+        try:
+            with open(path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return DEFAULT_CONFIG.copy()
     else:
         config = DEFAULT_CONFIG.copy()
         config["guild_id"] = guild_id
@@ -58,12 +76,42 @@ def get_config(guild_id: str) -> Dict:
         return config
 
 def save_config(guild_id: str, config: Dict):
-    path = f"{CONFIG_DIR}/{guild_id}.json"
-    with open(path, 'w') as f:
-        json.dump(config, f, indent=2)
+    """Save server configuration with path sanitization"""
+    # Sanitize guild_id
+    if not guild_id or not isinstance(guild_id, str):
+        return
+    
+    import re
+    if not re.match(r'^\d{17,19}$', guild_id):
+        return
+    
+    # Use safe path joining
+    path = os.path.join(CONFIG_DIR, f"{guild_id}.json")
+    # Ensure path is within CONFIG_DIR
+    if not os.path.abspath(path).startswith(os.path.abspath(CONFIG_DIR)):
+        return
+    
+    try:
+        with open(path, 'w') as f:
+            json.dump(config, f, indent=2)
+    except IOError:
+        pass  # Silently fail on write errors
 
 def list_servers() -> List[str]:
-    return [f.split('.')[0] for f in os.listdir(CONFIG_DIR) if f.endswith('.json')]
+    """List all server IDs with validation"""
+    try:
+        files = os.listdir(CONFIG_DIR)
+        servers = []
+        import re
+        for f in files:
+            if f.endswith('.json'):
+                guild_id = f.split('.')[0]
+                # Validate guild_id format
+                if re.match(r'^\d{17,19}$', guild_id):
+                    servers.append(guild_id)
+        return servers
+    except (OSError, IOError):
+        return []
 
 def load_banned() -> set:
     """Load banned server IDs"""
@@ -97,7 +145,23 @@ def unban_server(guild_id: str):
     save_banned(banned)
 
 def delete_config(guild_id: str):
-    """Delete a server's configuration"""
-    path = f"{CONFIG_DIR}/{guild_id}.json"
-    if os.path.exists(path):
-        os.remove(path)
+    """Delete a server's configuration with path sanitization"""
+    # Sanitize guild_id
+    if not guild_id or not isinstance(guild_id, str):
+        return
+    
+    import re
+    if not re.match(r'^\d{17,19}$', guild_id):
+        return
+    
+    # Use safe path joining
+    path = os.path.join(CONFIG_DIR, f"{guild_id}.json")
+    # Ensure path is within CONFIG_DIR
+    if not os.path.abspath(path).startswith(os.path.abspath(CONFIG_DIR)):
+        return
+    
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except (IOError, OSError):
+        pass  # Silently fail on delete errors

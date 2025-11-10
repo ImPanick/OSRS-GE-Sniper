@@ -1,41 +1,49 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>OSRS Sniper Admin Panel</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <style>
-    body { background:#000; color:#0f0; font-family:Arial; padding:20px; }
-    .card { background:#001100; border:2px solid #0f0; padding:20px; margin:20px 0; border-radius:10px; }
-    input { background:#000; color:#0f0; border:1px solid #0f0; padding:8px; width:300px; margin:10px 0; }
-    button { background:#0f0; color:#000; padding:10px 20px; font-weight:bold; border:none; cursor:pointer; margin:5px; }
-    button:hover { background:#00ff00; }
-    button.danger { background:#ff0000; color:#fff; }
-    button.danger:hover { background:#ff3333; }
-    table { width:100%; border-collapse:collapse; margin:20px 0; }
-    th, td { border:1px solid #0f0; padding:10px; text-align:left; }
-    th { background:#002200; }
-    .status-enabled { color:#0f0; }
-    .status-disabled { color:#ff0; }
-    .status-banned { color:#f00; }
-  </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSRS GE Sniper - Admin Panel</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>🔒 SNIPER ADMIN PANEL</h1>
+  <h1>🔒 Admin Panel</h1>
   
-  <div class="card">
-    <h2>Admin Authentication</h2>
-    <input type="password" id="admin_key" placeholder="Enter admin key from config.json">
-    <button onclick="authenticate()">AUTHENTICATE</button>
-    <div id="auth_status"></div>
-  </div>
+  <nav>
+    <a href="/dashboard">📊 Dashboard</a>
+    <a href="/volume_tracker">📈 Volume Tracker</a>
+    <a href="/admin" class="active">🔒 Admin</a>
+  </nav>
 
-  <div id="admin_panel" style="display:none;">
+  <div style="max-width: 1200px; margin: 0 auto; padding: 0 2rem;">
     <div class="card">
-      <h2>Server Management</h2>
-      <button onclick="loadServers()">REFRESH SERVER LIST</button>
-      <div id="server_list"></div>
+      <h2>🔐 Authentication</h2>
+      <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 300px;">
+          <label>Admin Key</label>
+          <input type="password" id="admin_key" placeholder="Enter admin key from config.json" autocomplete="off">
+        </div>
+        <button onclick="authenticate()">Authenticate</button>
+      </div>
+      <div id="auth_status" style="margin-top: 1rem; min-height: 1.5rem;"></div>
+    </div>
+
+    <div id="admin_panel" style="display:none;">
+      <div class="card">
+        <h2>🖥️ Server Management</h2>
+        <div style="margin-bottom: 1.5rem;">
+          <button onclick="loadServers()">🔄 Refresh Server List</button>
+        </div>
+        <div id="server_list">
+          <p style="color: var(--text-muted); text-align: center; padding: 2rem;">Click refresh to load servers</p>
+        </div>
+      </div>
     </div>
   </div>
+
+  <footer>
+    <p>Admin Panel • Use with caution</p>
+  </footer>
 
   <script>
     let adminKey = '';
@@ -43,66 +51,101 @@
     function authenticate() {
       adminKey = document.getElementById('admin_key').value;
       if (!adminKey) {
-        document.getElementById('auth_status').innerHTML = '<span style="color:#f00">Please enter admin key</span>';
+        document.getElementById('auth_status').innerHTML = '<span style="color:var(--accent-danger);">⚠️ Please enter admin key</span>';
         return;
       }
       
       loadServers();
       document.getElementById('admin_panel').style.display = 'block';
-      document.getElementById('auth_status').innerHTML = '<span style="color:#0f0">✓ Authenticated</span>';
+      document.getElementById('auth_status').innerHTML = '<span style="color:var(--accent-success);">✓ Authenticated</span>';
     }
 
     async function loadServers() {
+      const statusDiv = document.getElementById('auth_status');
+      const listDiv = document.getElementById('server_list');
+      
+      listDiv.innerHTML = '<div style="text-align:center;padding:2rem;"><div class="loading" style="margin:0 auto;"></div><p style="margin-top:1rem;color:var(--text-muted);">Loading servers...</p></div>';
+      
       try {
         const response = await fetch('/admin/servers', {
           headers: {'X-Admin-Key': adminKey}
         });
         
         if (response.status === 401) {
-          document.getElementById('auth_status').innerHTML = '<span style="color:#f00">✗ Invalid admin key</span>';
+          statusDiv.innerHTML = '<span style="color:var(--accent-danger);">✗ Invalid admin key</span>';
+          document.getElementById('admin_panel').style.display = 'none';
+          listDiv.innerHTML = '';
           return;
+        }
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
         }
         
         const servers = await response.json();
         displayServers(servers);
       } catch (e) {
         console.error(e);
-        document.getElementById('server_list').innerHTML = '<span style="color:#f00">Error loading servers</span>';
+        listDiv.innerHTML = '<p style="color:var(--accent-danger);text-align:center;padding:2rem;">❌ Error loading servers. Please check your connection and try again.</p>';
       }
     }
 
     function displayServers(servers) {
+      const listDiv = document.getElementById('server_list');
+      
       if (servers.length === 0) {
-        document.getElementById('server_list').innerHTML = '<p>No servers configured yet.</p>';
+        listDiv.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:2rem;">No servers configured yet.</p>';
         return;
       }
 
-      let html = '<table><tr><th>Guild ID</th><th>Status</th><th>Channels</th><th>Actions</th></tr>';
+      const tableContainer = document.createElement('div');
+      tableContainer.className = 'table-container';
       
-      for (const server of servers) {
+      const table = document.createElement('table');
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th>Guild ID</th>
+            <th>Status</th>
+            <th>Channels</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="serversTableBody"></tbody>
+      `;
+      
+      const tbody = table.querySelector('#serversTableBody');
+      
+      servers.forEach(server => {
         const statusClass = server.banned ? 'status-banned' : (server.enabled ? 'status-enabled' : 'status-disabled');
         const statusText = server.banned ? 'BANNED' : (server.enabled ? 'ENABLED' : 'DISABLED');
+        const statusIcon = server.banned ? '🚫' : (server.enabled ? '✅' : '⏸️');
         
-        html += `<tr>
-          <td>${server.guild_id}</td>
-          <td class="${statusClass}">${statusText}</td>
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td><code style="color:var(--accent-primary);">${server.guild_id}</code></td>
+          <td class="${statusClass}">${statusIcon} ${statusText}</td>
           <td>${server.channels_configured} configured</td>
           <td>
-            ${server.banned 
-              ? `<button onclick="unbanServer('${server.guild_id}')">UNBAN</button>`
-              : `<button onclick="banServer('${server.guild_id}')" class="danger">BAN</button>`
-            }
-            <button onclick="deleteServer('${server.guild_id}')" class="danger">DELETE</button>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+              ${server.banned 
+                ? `<button onclick="unbanServer('${server.guild_id}')" class="secondary">Unban</button>`
+                : `<button onclick="banServer('${server.guild_id}')" class="danger">Ban</button>`
+              }
+              <button onclick="deleteServer('${server.guild_id}')" class="danger">Delete</button>
+            </div>
           </td>
-        </tr>`;
-      }
+        `;
+        tbody.appendChild(row);
+      });
       
-      html += '</table>';
-      document.getElementById('server_list').innerHTML = html;
+      tableContainer.appendChild(table);
+      listDiv.innerHTML = '';
+      listDiv.appendChild(tableContainer);
     }
 
     async function banServer(guildId) {
-      if (!confirm(`Ban server ${guildId}?`)) return;
+      if (!confirm(`Are you sure you want to ban server ${guildId}?`)) return;
       
       try {
         const response = await fetch(`/admin/ban/${guildId}`, {
@@ -111,13 +154,14 @@
         });
         
         if (response.ok) {
-          alert('Server banned');
+          alert('✅ Server banned successfully');
           loadServers();
         } else {
-          alert('Failed to ban server');
+          const error = await response.json().catch(() => ({error: 'Unknown error'}));
+          alert(`❌ Failed to ban server: ${error.error || 'Unknown error'}`);
         }
       } catch (e) {
-        alert('Error: ' + e.message);
+        alert(`❌ Error: ${e.message}`);
       }
     }
 
@@ -131,18 +175,21 @@
         });
         
         if (response.ok) {
-          alert('Server unbanned');
+          alert('✅ Server unbanned successfully');
           loadServers();
         } else {
-          alert('Failed to unban server');
+          const error = await response.json().catch(() => ({error: 'Unknown error'}));
+          alert(`❌ Failed to unban server: ${error.error || 'Unknown error'}`);
         }
       } catch (e) {
-        alert('Error: ' + e.message);
+        alert(`❌ Error: ${e.message}`);
       }
     }
 
     async function deleteServer(guildId) {
-      if (!confirm(`DELETE server ${guildId}? This cannot be undone!`)) return;
+      if (!confirm(`⚠️ DELETE server ${guildId}?\n\nThis action cannot be undone!`)) return;
+      
+      if (!confirm(`Are you absolutely sure? This will permanently delete all configuration for server ${guildId}.`)) return;
       
       try {
         const response = await fetch(`/admin/delete/${guildId}`, {
@@ -151,15 +198,23 @@
         });
         
         if (response.ok) {
-          alert('Server deleted');
+          alert('✅ Server deleted successfully');
           loadServers();
         } else {
-          alert('Failed to delete server');
+          const error = await response.json().catch(() => ({error: 'Unknown error'}));
+          alert(`❌ Failed to delete server: ${error.error || 'Unknown error'}`);
         }
       } catch (e) {
-        alert('Error: ' + e.message);
+        alert(`❌ Error: ${e.message}`);
       }
     }
+
+    // Allow Enter key to authenticate
+    document.getElementById('admin_key').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        authenticate();
+      }
+    });
   </script>
 </body>
 </html>
