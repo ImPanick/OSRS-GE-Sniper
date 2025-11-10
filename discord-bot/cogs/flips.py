@@ -2,7 +2,8 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import requests, json
+import requests
+import json
 import sys
 import os
 
@@ -16,14 +17,16 @@ if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config.json')
 if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
-CONFIG = json.load(open(CONFIG_PATH))
+with open(CONFIG_PATH, 'r') as f:
+    CONFIG = json.load(f)
 
 class Flips(commands.Cog):
-    def __init__(self, bot): self.bot = bot
+    def __init__(self, bot):
+        self.bot = bot
 
     @app_commands.command(name="flips", description="Top flips right now")
     async def flips(self, interaction: discord.Interaction, min_gp: int = 2_000_000):
-        data = requests.get(f"{CONFIG['backend_url']}/api/top").json()
+        data = requests.get(f"{CONFIG['backend_url']}/api/top", timeout=30).json()
         data = [d for d in data if d['profit'] >= min_gp]
         embed = discord.Embed(title=f"Top Flips >{min_gp/1e6:.0f}M", color=0x00ff00)
         
@@ -42,4 +45,5 @@ class Flips(commands.Cog):
         
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
-async def setup(bot): await bot.add_cog(Flips(bot))
+async def setup(bot):
+    await bot.add_cog(Flips(bot))

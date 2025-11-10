@@ -11,9 +11,13 @@ if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config.json')
 if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
-CONFIG = json.load(open(CONFIG_PATH))
+with open(CONFIG_PATH, 'r') as f:
+    CONFIG = json.load(f)
 
 class Config(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
     @app_commands.command(name="sniper_config", description="Open web dashboard for this server")
     @app_commands.checks.has_permissions(administrator=True)
     async def config(self, interaction: discord.Interaction):

@@ -18,7 +18,7 @@ BASE_URL = "https://prices.runescape.wiki/api/v1/osrs/mapping"
 # Get the directory where this script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_FILE = os.path.join(SCRIPT_DIR, "item_cache.json")
-USER_AGENT = "OSRS-Sniper-CacheUpdater/1.0"
+USER_AGENT = "OSRS-Sniper"
 UPDATE_INTERVAL = 6 * 60 * 60  # 6 hours in seconds
 
 def fetch_item_mapping():

@@ -2,7 +2,8 @@
 import discord
 from discord import app_commands, Embed
 from discord.ext import commands
-import requests, json
+import requests
+import json
 import sys
 import os
 
@@ -16,12 +17,16 @@ if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config.json')
 if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
-CONFIG = json.load(open(CONFIG_PATH))
+with open(CONFIG_PATH, 'r') as f:
+    CONFIG = json.load(f)
 
 class Dumps(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
     @app_commands.command(name="dip", description="GOD-TIER DUMP SNIPER — BUY THE PANIC")
     async def dip(self, interaction: discord.Interaction):
-        data = requests.get(f"{CONFIG['backend_url']}/api/dumps").json()
+        data = requests.get(f"{CONFIG['backend_url']}/api/dumps", timeout=30).json()
         if not data:
             await interaction.response.send_message("Market stable. No panic. Yet.", ephemeral=True)
             return

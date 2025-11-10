@@ -20,7 +20,7 @@ from security import (
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 BASE = "https://prices.runescape.wiki/api/v1/osrs"
-HEADERS = {"User-Agent": "OSRS-Sniper-Empire/3.0 (+your-discord)"}
+HEADERS = {"User-Agent": "OSRS-Sniper (+your-discord)"}
 
 # Load config with fallback paths for Docker and local development
 CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))

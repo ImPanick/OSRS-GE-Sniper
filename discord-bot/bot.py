@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands, tasks
-import requests, json
+import requests
+import json
 import os
 
 # Load config with fallback paths for Docker and local development
@@ -9,7 +10,8 @@ if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
 if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
-CONFIG = json.load(open(CONFIG_PATH))
+with open(CONFIG_PATH, 'r') as f:
+    CONFIG = json.load(f)
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
@@ -26,9 +28,9 @@ async def poll_alerts():
     """Poll backend and route notifications to per-server channels"""
     try:
         # Get latest data
-        dumps = requests.get(f"{CONFIG['backend_url']}/api/dumps", timeout=5).json() or []
-        spikes = requests.get(f"{CONFIG['backend_url']}/api/spikes", timeout=5).json() or []
-        flips = requests.get(f"{CONFIG['backend_url']}/api/top", timeout=5).json() or []
+        dumps = requests.get(f"{CONFIG['backend_url']}/api/dumps", timeout=30).json() or []
+        spikes = requests.get(f"{CONFIG['backend_url']}/api/spikes", timeout=30).json() or []
+        flips = requests.get(f"{CONFIG['backend_url']}/api/top", timeout=30).json() or []
         
         # Import router
         from utils.notification_router import broadcast_to_all_servers

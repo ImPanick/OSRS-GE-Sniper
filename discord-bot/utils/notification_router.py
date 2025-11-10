@@ -15,7 +15,8 @@ if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', '..', 'config.json')
 if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
-CONFIG = json.load(open(CONFIG_PATH))
+with open(CONFIG_PATH, 'r') as f:
+    CONFIG = json.load(f)
 
 def get_server_config(guild_id: str):
     """Fetch server config from backend"""
@@ -241,7 +242,7 @@ async def broadcast_to_all_servers(bot, items, item_type: str, embed_template_fu
             response = requests.get(f"{backend_url}/api/server_banned/{guild_id}", timeout=1)
             if response.status_code == 200 and response.json().get("banned"):
                 continue
-        except:
+        except Exception:
             pass
         
         # Route each item to appropriate channel
