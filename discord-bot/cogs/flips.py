@@ -10,7 +10,13 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils.item_utils import get_item_thumbnail_url, get_item_wiki_url
 
-CONFIG = json.load(open('../../config.json'))
+# Load config with fallback paths for Docker and local development
+CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', '..', 'config.json'))
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config.json')
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+CONFIG = json.load(open(CONFIG_PATH))
 
 class Flips(commands.Cog):
     def __init__(self, bot): self.bot = bot

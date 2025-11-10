@@ -8,21 +8,94 @@ import requests
 import json
 import os
 
-# Load config - path relative to discord-bot directory
+# Load config with fallback paths for Docker and local development
 # From discord-bot/utils/notification_router.py -> discord-bot/ -> root/config.json
-# Same as bot.py which uses '../config.json' from discord-bot/
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'config.json')
+CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'config.json'))
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', '..', 'config.json')
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
 CONFIG = json.load(open(CONFIG_PATH))
 
 def get_server_config(guild_id: str):
     """Fetch server config from backend"""
     try:
-        response = requests.get(f"{CONFIG['backend_url']}/api/server_config/{guild_id}", timeout=2)
+        backend_url = os.getenv('BACKEND_URL', CONFIG.get('backend_url', 'http://localhost:5000'))
+        response = requests.get(f"{backend_url}/api/server_config/{guild_id}", timeout=2)
         if response.status_code == 200:
             return response.json()
     except:
         pass
     return None
+
+def determine_roles_to_ping(item, item_type: str, server_config):
+    """
+    Determine which roles to ping based on risk level and quality
+    
+    Returns list of role IDs/names to ping
+    """
+    if not server_config:
+        return []
+    
+    roles = server_config.get("roles", {})
+    roles_to_ping = []
+    
+    # Risk-based role pings
+    risk_score = item.get("risk_score", 0)
+    risk_level = item.get("risk_level", "").upper()
+    
+    if risk_level == "LOW" and roles.get("risk_low"):
+        roles_to_ping.append(roles["risk_low"])
+    elif risk_level == "MEDIUM" and roles.get("risk_medium"):
+        roles_to_ping.append(roles["risk_medium"])
+    elif risk_level == "HIGH" and roles.get("risk_high"):
+        roles_to_ping.append(roles["risk_high"])
+    elif risk_level == "VERY HIGH" and roles.get("risk_very_high"):
+        roles_to_ping.append(roles["risk_very_high"])
+    
+    # Quality-based role pings (for dumps)
+    if item_type == "dump":
+        quality = item.get("quality", "")
+        quality_label = item.get("quality_label", "")
+        volume = item.get("volume", 0)
+        
+        # Nuclear dumps (1.5M+ volume)
+        if volume > 1_500_000 and roles.get("quality_nuclear"):
+            roles_to_ping.append(roles["quality_nuclear"])
+        
+        # Quality-based pings
+        if "⭐⭐⭐⭐⭐" in quality or "GOD-TIER" in quality_label:
+            if roles.get("quality_god_tier"):
+                roles_to_ping.append(roles["quality_god_tier"])
+        elif "⭐⭐⭐⭐" in quality or "ELITE" in quality_label:
+            if roles.get("quality_elite"):
+                roles_to_ping.append(roles["quality_elite"])
+        elif "⭐⭐⭐" in quality or "PREMIUM" in quality_label:
+            if roles.get("quality_premium"):
+                roles_to_ping.append(roles["quality_premium"])
+        elif "⭐⭐" in quality or "GOOD" in quality_label:
+            if roles.get("quality_good"):
+                roles_to_ping.append(roles["quality_good"])
+        elif "⭐" in quality or "DEAL" in quality_label:
+            if roles.get("quality_deal"):
+                roles_to_ping.append(roles["quality_deal"])
+        
+        # General dump role
+        if roles.get("dumps"):
+            roles_to_ping.append(roles["dumps"])
+    
+    elif item_type == "spike":
+        # General spike role
+        if roles.get("spikes"):
+            roles_to_ping.append(roles["spikes"])
+    
+    elif item_type == "flip":
+        # General flip role
+        if roles.get("flips"):
+            roles_to_ping.append(roles["flips"])
+    
+    # Remove duplicates
+    return list(set(roles_to_ping))
 
 def determine_channel(item, item_type: str, server_config):
     """
@@ -90,6 +163,9 @@ async def route_notification(bot, guild_id: str, item, item_type: str, embed: di
     if not channel_name:
         return False
     
+    # Determine roles to ping
+    roles_to_ping = determine_roles_to_ping(item, item_type, server_config)
+    
     # Try to find the channel
     try:
         # Channel name can be a channel ID (numeric string) or channel name
@@ -103,7 +179,23 @@ async def route_notification(bot, guild_id: str, item, item_type: str, embed: di
             channel = bot.get_channel(int(channel_name))
             # Verify it's in the correct guild
             if channel and channel.guild.id == guild.id:
-                await channel.send(embed=embed)
+                # Build role mentions
+                role_mentions = []
+                for role_identifier in roles_to_ping:
+                    role = None
+                    # Try as role ID first
+                    if str(role_identifier).isdigit():
+                        role = guild.get_role(int(role_identifier))
+                    else:
+                        # Try to find by name
+                        role = discord.utils.get(guild.roles, name=str(role_identifier))
+                    
+                    if role:
+                        role_mentions.append(role.mention)
+                
+                # Send message with role mentions if any
+                content = " ".join(role_mentions) if role_mentions else None
+                await channel.send(content=content, embed=embed)
                 return True
         
         # Try to find by name (remove # if present)
@@ -111,7 +203,23 @@ async def route_notification(bot, guild_id: str, item, item_type: str, embed: di
         channel = discord.utils.get(guild.text_channels, name=channel_name_clean)
         
         if channel:
-            await channel.send(embed=embed)
+            # Build role mentions
+            role_mentions = []
+            for role_identifier in roles_to_ping:
+                role = None
+                # Try as role ID first
+                if str(role_identifier).isdigit():
+                    role = guild.get_role(int(role_identifier))
+                else:
+                    # Try to find by name
+                    role = discord.utils.get(guild.roles, name=str(role_identifier))
+                
+                if role:
+                    role_mentions.append(role.mention)
+            
+            # Send message with role mentions if any
+            content = " ".join(role_mentions) if role_mentions else None
+            await channel.send(content=content, embed=embed)
             return True
     except Exception as e:
         print(f"[ERROR] Failed to route notification to {guild_id}: {e}")
@@ -129,7 +237,8 @@ async def broadcast_to_all_servers(bot, items, item_type: str, embed_template_fu
         
         # Check if server is banned
         try:
-            response = requests.get(f"{CONFIG['backend_url']}/api/server_banned/{guild_id}", timeout=1)
+            backend_url = os.getenv('BACKEND_URL', CONFIG.get('backend_url', 'http://localhost:5000'))
+            response = requests.get(f"{backend_url}/api/server_banned/{guild_id}", timeout=1)
             if response.status_code == 200 and response.json().get("banned"):
                 continue
         except:

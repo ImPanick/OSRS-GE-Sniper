@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Sensitive config files
+config.json
+backend/config.json
+**/config.json
+
+# Data files
+backend/server_configs/
+backend/banned_servers.json
+backend/utils/item_cache.json
+backend/utils/*.db
+backend/utils/*.sqlite
+discord-bot/data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+.dockerignore
+

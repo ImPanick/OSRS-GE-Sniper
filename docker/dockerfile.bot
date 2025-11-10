@@ -1,6 +1,18 @@
 # Dockerfile.bot
 FROM python:3.11-slim
 WORKDIR /app
-COPY discord-bot/ .
-RUN pip install -r requirements.txt
+
+# Install dependencies
+COPY discord-bot/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application files
+COPY discord-bot/ ./
+COPY discord-bot/cogs/ ./cogs/
+COPY discord-bot/utils/ ./utils/
+
+# Create data directory
+RUN mkdir -p data
+
+# Run bot
 CMD ["python", "bot.py"]

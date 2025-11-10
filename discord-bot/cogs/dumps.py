@@ -10,7 +10,13 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils.item_utils import get_item_thumbnail_url, get_item_wiki_url
 
-CONFIG = json.load(open('../../config.json'))
+# Load config with fallback paths for Docker and local development
+CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', '..', 'config.json'))
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config.json')
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+CONFIG = json.load(open(CONFIG_PATH))
 
 class Dumps(commands.Cog):
     @app_commands.command(name="dip", description="GOD-TIER DUMP SNIPER — BUY THE PANIC")
@@ -28,15 +34,12 @@ class Dumps(commands.Cog):
             description="**INSTANT BUY SIGNALS** — Sorted by *Volume × Crash Intensity*",
             color=0x8B0000  # Blood red
         )
-        embed.set_thumbnail(url="https://i.imgur.com/removed.png")  # Replace with nuclear explosion GIF
 
         for item in sorted_dumps[:8]:
             name = item['name']
-            item_id = item.get('id', 0)
             drop = item['drop_pct']
             price = item['buy']
             vol = item['volume']
-            profit_4h = item.get('profit_4h', 0)
             insta_buy = item.get('insta_buy', 0)
             insta_sell = item.get('insta_sell', 0)
             quality = item.get('quality', '')
