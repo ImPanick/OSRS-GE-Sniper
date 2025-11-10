@@ -4,6 +4,7 @@ from flask import Flask, render_template_string, jsonify, request, redirect, Res
 from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
 import os
+import urllib.parse
 from utils.database import log_price
 import secrets
 from security import (
@@ -116,8 +117,6 @@ def get_item_thumbnail_url(item_name: str) -> str:
     """
     if not item_name:
         return None
-    
-    import urllib.parse
     
     # Format item name for wiki URL
     wiki_name = item_name.strip().replace(' ', '_')
@@ -554,6 +553,10 @@ def server_config(guild_id):
         return jsonify({"error": "This server has been banned from using the sniper bot."}), 403
     
     config = get_config(guild_id)
+    
+    # Ensure roles dict exists for older configs
+    if "roles" not in config:
+        config["roles"] = {}
     
     if request.method == 'POST':
         try:

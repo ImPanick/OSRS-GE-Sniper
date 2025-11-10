@@ -10,7 +10,13 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils.item_utils import get_item_thumbnail_url, get_item_wiki_url
 
-CONFIG = json.load(open('../../config.json'))
+# Load config with fallback paths for Docker and local development
+CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', '..', 'config.json'))
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config.json')
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+CONFIG = json.load(open(CONFIG_PATH))
 
 class Spikes(commands.Cog):
     @app_commands.command(name="pump", description="Price spikes — SELL!")
@@ -20,7 +26,6 @@ class Spikes(commands.Cog):
         
         for item in data[:8]:
             item_name = item.get('name', 'Unknown')
-            item_id = item.get('id', 0)
             embed.add_field(name=f"{item_name} +{item.get('rise_pct', 0):.1f}%",
                 value=f"Now: {item.get('sell', 0):,} GP | Vol: {item.get('volume', 0):,}", inline=False)
         

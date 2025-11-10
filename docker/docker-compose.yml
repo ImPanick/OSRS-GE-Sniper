@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   backend:
     build:
@@ -48,3 +50,4 @@ services:
 networks:
   sniper-network:
     driver: bridge
+

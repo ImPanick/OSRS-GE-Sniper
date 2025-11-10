@@ -129,7 +129,6 @@ If you need channel IDs for configuration:
    - Right-click on any channel
    - Click **"Copy ID"**
    - Use this ID in your configuration
-
 ## Quick Start
 
 ### 1. Clone Repository
@@ -332,4 +331,3 @@ docker-compose up -d --build
 - Discord Developer Portal: https://discord.com/developers/applications
 - Discord.py Documentation: https://discordpy.readthedocs.io/
 - Discord API Documentation: https://discord.com/developers/docs/
-

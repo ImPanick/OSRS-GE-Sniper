@@ -17,6 +17,24 @@ DEFAULT_CONFIG = {
         "high_alch_margins": None,
         "high_limit_items": None       # > 10k limit + high vol
     },
+    "roles": {
+        # Risk-based role pings
+        "risk_low": None,              # Low risk dumps (< 20)
+        "risk_medium": None,           # Medium risk dumps (20-40)
+        "risk_high": None,             # High risk dumps (40-60)
+        "risk_very_high": None,       # Very high risk dumps (60+)
+        # Quality-based role pings
+        "quality_nuclear": None,      # Nuclear dumps (1.5M+ volume)
+        "quality_god_tier": None,      # God-tier dumps (5 stars)
+        "quality_elite": None,         # Elite dumps (4 stars)
+        "quality_premium": None,       # Premium dumps (3 stars)
+        "quality_good": None,          # Good dumps (2 stars)
+        "quality_deal": None,          # Deal dumps (1 star)
+        # General notification roles
+        "dumps": None,                 # All dumps
+        "spikes": None,                # All spikes
+        "flips": None                  # All flips
+    },
     "thresholds": {
         "cheap_max": 10000,
         "medium_max": 500000,

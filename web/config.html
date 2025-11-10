@@ -62,6 +62,67 @@
       
       <div id="save_status" style="margin-top: 1.5rem; min-height: 1.5rem; text-align: center;"></div>
     </div>
+
+    <div class="card">
+      <h2>🔔 Role Ping Configuration</h2>
+      <p style="color: var(--text-secondary); margin-bottom: 2rem;">
+        Configure roles to ping based on risk level and quality. Enter role IDs or role names (without @).
+      </p>
+      <div class="channel-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+        <div class="filter-group">
+          <label>Low Risk Dumps (&lt; 20 risk score)</label>
+          <input type="text" id="risk_low" placeholder="Role ID or name" value="{{ config.roles.risk_low or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>Medium Risk Dumps (20-40 risk score)</label>
+          <input type="text" id="risk_medium" placeholder="Role ID or name" value="{{ config.roles.risk_medium or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>High Risk Dumps (40-60 risk score)</label>
+          <input type="text" id="risk_high" placeholder="Role ID or name" value="{{ config.roles.risk_high or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>Very High Risk Dumps (60+ risk score)</label>
+          <input type="text" id="risk_very_high" placeholder="Role ID or name" value="{{ config.roles.risk_very_high or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>Nuclear Dumps (1.5M+ volume)</label>
+          <input type="text" id="quality_nuclear" placeholder="Role ID or name" value="{{ config.roles.quality_nuclear or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>God-Tier Dumps (⭐⭐⭐⭐⭐)</label>
+          <input type="text" id="quality_god_tier" placeholder="Role ID or name" value="{{ config.roles.quality_god_tier or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>Elite Dumps (⭐⭐⭐⭐)</label>
+          <input type="text" id="quality_elite" placeholder="Role ID or name" value="{{ config.roles.quality_elite or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>Premium Dumps (⭐⭐⭐)</label>
+          <input type="text" id="quality_premium" placeholder="Role ID or name" value="{{ config.roles.quality_premium or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>Good Dumps (⭐⭐)</label>
+          <input type="text" id="quality_good" placeholder="Role ID or name" value="{{ config.roles.quality_good or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>Deal Dumps (⭐)</label>
+          <input type="text" id="quality_deal" placeholder="Role ID or name" value="{{ config.roles.quality_deal or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>All Dumps (General)</label>
+          <input type="text" id="dumps" placeholder="Role ID or name" value="{{ config.roles.dumps or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>All Spikes (General)</label>
+          <input type="text" id="spikes" placeholder="Role ID or name" value="{{ config.roles.spikes or '' }}">
+        </div>
+        <div class="filter-group">
+          <label>All Flips (General)</label>
+          <input type="text" id="flips" placeholder="Role ID or name" value="{{ config.roles.flips or '' }}">
+        </div>
+      </div>
+    </div>
   </div>
 
   <footer>
@@ -82,6 +143,21 @@
           recipe_items: document.getElementById('recipe_items').value.trim() || null,
           high_alch_margins: document.getElementById('high_alch_margins').value.trim() || null,
           high_limit_items: document.getElementById('high_limit_items').value.trim() || null
+        },
+        roles: {
+          risk_low: document.getElementById('risk_low')?.value.trim() || null,
+          risk_medium: document.getElementById('risk_medium')?.value.trim() || null,
+          risk_high: document.getElementById('risk_high')?.value.trim() || null,
+          risk_very_high: document.getElementById('risk_very_high')?.value.trim() || null,
+          quality_nuclear: document.getElementById('quality_nuclear')?.value.trim() || null,
+          quality_god_tier: document.getElementById('quality_god_tier')?.value.trim() || null,
+          quality_elite: document.getElementById('quality_elite')?.value.trim() || null,
+          quality_premium: document.getElementById('quality_premium')?.value.trim() || null,
+          quality_good: document.getElementById('quality_good')?.value.trim() || null,
+          quality_deal: document.getElementById('quality_deal')?.value.trim() || null,
+          dumps: document.getElementById('dumps')?.value.trim() || null,
+          spikes: document.getElementById('spikes')?.value.trim() || null,
+          flips: document.getElementById('flips')?.value.trim() || null
         }
       };
       
