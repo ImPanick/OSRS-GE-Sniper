@@ -19,7 +19,7 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 @bot.event
 async def on_ready():
     print(f"{bot.user} ONLINE")
-    for filename in ["flips", "dumps", "spikes", "watchlist", "stats", "config"]:
+    for filename in ["flips", "dumps", "spikes", "watchlist", "stats", "config", "nightly"]:
         await bot.load_extension(f"cogs.{filename}")
     poll_alerts.start()
 

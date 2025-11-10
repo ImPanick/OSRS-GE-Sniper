@@ -504,6 +504,155 @@ def api_all_items():
     """API endpoint for volume tracker - returns all items with filtering support"""
     return jsonify(all_items)
 
+@app.route('/api/nightly')
+@rate_limit(max_requests=50, window=60)
+def api_nightly():
+    """
+    API endpoint for overnight flip recommendations
+    Analyzes items for best 8-16 hour profit potential
+    """
+    min_profit = request.args.get('min_profit', 1_000_000, type=int)
+    
+    try:
+        # Get all items with their data
+        latest = requests.get(f"{BASE}/latest", headers=HEADERS, timeout=30).json()
+        h1 = requests.get(f"{BASE}/1h", headers=HEADERS, timeout=30).json()
+        mapping = requests.get(f"{BASE}/mapping", headers=HEADERS, timeout=30).json()
+        
+        limit_map = {str(m['id']): m.get('limit', 0) for m in mapping}
+        
+        overnight_opportunities = []
+        
+        for id_str, data in latest.get("data", {}).items():
+            if not data.get("high") or not data.get("low"):
+                continue
+            
+            low, high = data["low"], data["high"]
+            name = item_names.get(id_str, f"Item {id_str}")
+            vol = h1.get(id_str, {}).get("volume", 0) or 1
+            limit = limit_map.get(id_str, 0)
+            
+            # Skip items with no limit or very low volume
+            if limit == 0 or vol < 1000:
+                continue
+            
+            # Get price historicals
+            historicals = get_price_historicals(int(id_str))
+            avg_24h = historicals.get('avg_24h')
+            avg_12h = historicals.get('avg_12h')
+            avg_6h = historicals.get('avg_6h')
+            avg_1h = historicals.get('avg_1h')
+            
+            # Skip if we don't have enough historical data
+            if not avg_24h or not avg_12h:
+                continue
+            
+            # INSTA BUY/SELL
+            insta_buy = data.get('high', low)
+            insta_sell = data.get('low', high)
+            
+            # Calculate current profit
+            current_profit = high - low - ge_tax(high)
+            current_roi = (current_profit / low * 100) if low > 0 else 0
+            
+            # Calculate risk metrics
+            risk_metrics = calculate_risk_metrics(low, high, insta_buy, insta_sell, vol, limit, current_profit)
+            
+            # Overnight prediction logic:
+            # 1. Items that are currently below their 24h average (potential recovery)
+            # 2. Items with consistent volume (reliable)
+            # 3. Items with good liquidity (can actually flip)
+            # 4. Items with low risk (safer overnight)
+            
+            # Calculate price deviation from 24h average
+            price_deviation = ((avg_24h - low) / avg_24h * 100) if avg_24h > 0 else 0
+            
+            # Calculate trend (is price recovering?)
+            trend_score = 0
+            if avg_6h and avg_12h and avg_24h:
+                # Positive trend if current price is higher than 6h average
+                if avg_6h > 0:
+                    trend_6h = ((low - avg_6h) / avg_6h * 100) if avg_6h > 0 else 0
+                    trend_12h = ((avg_6h - avg_12h) / avg_12h * 100) if avg_12h > 0 else 0
+                    # Positive trend if both are positive or recovering
+                    if trend_6h > -2 and trend_12h > -5:  # Not dropping too fast
+                        trend_score = 50
+                    if trend_6h > 0:  # Actually recovering
+                        trend_score = 75
+            
+            # Volume consistency (higher is better for overnight)
+            volume_consistency = min(100, (vol / 10000) * 20)  # 50k volume = 100 score
+            
+            # Overnight profit prediction
+            # Base prediction on: current profit + recovery potential
+            recovery_potential = (avg_24h - low) * limit * 0.99 if price_deviation > 0 else 0
+            overnight_profit = current_profit * limit + recovery_potential * 0.5  # Conservative estimate
+            
+            # Skip if overnight profit is too low
+            if overnight_profit < min_profit:
+                continue
+            
+            overnight_roi = (overnight_profit / (low * limit) * 100) if low * limit > 0 else 0
+            
+            # Overnight confidence calculation
+            # Factors: price deviation, trend, volume consistency, liquidity, risk
+            confidence = 0
+            confidence += min(30, price_deviation * 2) if price_deviation > 0 else 0  # Up to 30% for undervalued
+            confidence += trend_score * 0.2  # Up to 15% for positive trend
+            confidence += volume_consistency * 0.2  # Up to 20% for consistent volume
+            confidence += risk_metrics.get('liquidity_score', 0) * 0.15  # Up to 15% for liquidity
+            confidence += max(0, 100 - risk_metrics.get('risk_score', 50)) * 0.2  # Up to 20% for low risk
+            
+            # Only include items with reasonable confidence
+            if confidence < 40:
+                continue
+            
+            # Generate reasoning
+            reasoning_parts = []
+            if price_deviation > 5:
+                reasoning_parts.append(f"{price_deviation:.1f}% below 24h average")
+            if trend_score > 50:
+                reasoning_parts.append("showing recovery trend")
+            if volume_consistency > 70:
+                reasoning_parts.append("consistent volume")
+            if risk_metrics.get('liquidity_score', 0) > 70:
+                reasoning_parts.append("high liquidity")
+            if risk_metrics.get('risk_score', 100) < 30:
+                reasoning_parts.append("low risk")
+            
+            reasoning = ", ".join(reasoning_parts) if reasoning_parts else "good fundamentals"
+            
+            overnight_opportunities.append({
+                "id": int(id_str),
+                "name": name,
+                "buy": low,
+                "sell": high,
+                "insta_buy": insta_buy,
+                "insta_sell": insta_sell,
+                "profit": current_profit,
+                "roi": current_roi,
+                "volume": vol,
+                "limit": limit,
+                "overnight_profit": int(overnight_profit),
+                "overnight_roi": overnight_roi,
+                "overnight_confidence": confidence,
+                "reasoning": reasoning,
+                **risk_metrics,
+                **historicals
+            })
+        
+        # Sort by overnight profit potential (weighted by confidence)
+        overnight_opportunities.sort(
+            key=lambda x: x['overnight_profit'] * (x['overnight_confidence'] / 100),
+            reverse=True
+        )
+        
+        return jsonify(overnight_opportunities[:10])  # Return top 10
+        
+    except Exception as e:
+        print(f"[ERROR] api_nightly: {e}")
+        return jsonify({"error": "Failed to calculate overnight recommendations"}), 500
+
 @app.route('/api/update_cache', methods=['POST'])
 @require_admin_key()
 @rate_limit(max_requests=5, window=300)
