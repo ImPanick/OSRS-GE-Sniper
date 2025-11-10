@@ -1,19 +1,50 @@
-version: '3.8'
 services:
   backend:
-    build: ./backend
-    ports: ["5000:5000"]
-    volumes: ["./backend/utils:/app/utils"]
-    depends_on: [cache-updater]
+    build:
+      context: ..
+      dockerfile: docker/dockerfile.backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ../backend/server_configs:/app/server_configs
+      - ../backend/utils:/app/utils
+      - ../config.json:/app/config.json:ro
+    environment:
+      - FLASK_ENV=production
+      - CONFIG_PATH=/app/config.json
+    depends_on:
+      - cache-updater
     restart: unless-stopped
+    networks:
+      - sniper-network
 
   bot:
-    build: ./discord-bot
-    depends_on: [backend]
+    build:
+      context: ..
+      dockerfile: docker/dockerfile.bot
+    volumes:
+      - ../config.json:/app/config.json:ro
+      - ../discord-bot/data:/app/data
+    environment:
+      - BACKEND_URL=http://backend:5000
+      - CONFIG_PATH=/app/config.json
+    depends_on:
+      - backend
     restart: unless-stopped
+    networks:
+      - sniper-network
 
   cache-updater:
-    build: ./backend
+    build:
+      context: ..
+      dockerfile: docker/dockerfile.backend
     command: python utils/cache_updater.py
-    volumes: ["./backend/utils:/app/utils"]
+    volumes:
+      - ../backend/utils:/app/utils
     restart: unless-stopped
+    networks:
+      - sniper-network
+
+networks:
+  sniper-network:
+    driver: bridge
