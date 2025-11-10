@@ -3,8 +3,15 @@ import discord
 from discord import app_commands, Embed
 from discord.ext import commands
 import json
+import os
 
-CONFIG = json.load(open('../../config.json'))
+# Load config with fallback paths for Docker and local development
+CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', '..', 'config.json'))
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config.json')
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+CONFIG = json.load(open(CONFIG_PATH))
 
 class Config(commands.Cog):
     @app_commands.command(name="sniper_config", description="Open web dashboard for this server")

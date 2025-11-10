@@ -15,4 +15,6 @@ COPY discord-bot/utils/ ./utils/
 RUN mkdir -p data
 
 # Run bot
+
 CMD ["python", "bot.py"]
+

@@ -3,13 +3,21 @@ import requests, time, json, threading
 from flask import Flask, render_template_string, jsonify, request
 from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
-import sqlite3, os
+import os
+import urllib.parse
 from utils.database import log_price
 
 app = Flask(__name__)
 BASE = "https://prices.runescape.wiki/api/v1/osrs"
 HEADERS = {"User-Agent": "OSRS-Sniper-Empire/3.0 (+your-discord)"}
-CONFIG = json.load(open('../config.json'))
+
+# Load config with fallback paths for Docker and local development
+CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+CONFIG = json.load(open(CONFIG_PATH))
 
 item_names = {}
 top_items = []
@@ -96,8 +104,6 @@ def get_item_thumbnail_url(item_name: str) -> str:
     """
     if not item_name:
         return None
-    
-    import urllib.parse
     
     # Format item name for wiki URL
     wiki_name = item_name.strip().replace(' ', '_')
@@ -353,9 +359,14 @@ def server_config(guild_id):
     
     config = get_config(guild_id)
     
+    # Ensure roles dict exists for older configs
+    if "roles" not in config:
+        config["roles"] = {}
+    
     if request.method == 'POST':
         data = request.json
         config["channels"] = data.get("channels", config["channels"])
+        config["roles"] = data.get("roles", config.get("roles", {}))
         config["thresholds"] = data.get("thresholds", config["thresholds"])
         config["enabled"] = data.get("enabled", True)
         save_config(guild_id, config)
