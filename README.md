@@ -2,6 +2,8 @@
 
 A Discord bot and web dashboard for tracking OSRS Grand Exchange price movements, dumps, spikes, and profitable flips.
 
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/9a4282c36652471aa002017202d45a3b)](https://app.codacy.com/gh/ImPanick/OSRS-GE-Sniper/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+
 ## Features
 
 - **Real-time Price Tracking**: Monitors all GE items for dumps, spikes, and flips
