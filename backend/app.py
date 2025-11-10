@@ -9,7 +9,7 @@ from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
 import os
 import urllib.parse
-from utils.database import log_price, get_price_historicals
+from utils.database import log_price, get_price_historicals, init_db
 import secrets
 from security import (
     sanitize_guild_id, sanitize_channel_id, sanitize_webhook_url, sanitize_token,
@@ -18,7 +18,10 @@ from security import (
 )
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+# CORS configuration: restrict origins in production
+# Allow all origins in development, but should be restricted in production
+cors_origins = os.getenv('CORS_ORIGINS', '*').split(',')
+CORS(app, resources={r"/api/*": {"origins": cors_origins}})
 BASE = "https://prices.runescape.wiki/api/v1/osrs"
 HEADERS = {"User-Agent": "OSRS-Sniper (+your-discord)"}
 
@@ -37,6 +40,8 @@ if os.path.exists(CONFIG_PATH):
     except (json.JSONDecodeError, IOError):
         CONFIG = {}
 
+# Thread-safe storage for item data
+_item_lock = threading.Lock()
 item_names = {}
 top_items = []
 dump_items = []
@@ -150,21 +155,35 @@ def get_dump_quality(drop_pct, volume, low_price):
         return "", ""
 
 def load_names():
+    """Load item names from cache with proper error handling"""
     global item_names
-    cache_path = "utils/item_cache.json"
+    cache_path = os.path.join(os.path.dirname(__file__), "utils", "item_cache.json")
+    if not os.path.exists(cache_path):
+        # Try alternative paths
+        cache_path = "utils/item_cache.json"
+        if not os.path.exists(cache_path):
+            cache_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "backend", "utils", "item_cache.json")
+    
     if os.path.exists(cache_path):
         try:
-            item_names = json.load(open(cache_path))
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                item_names = json.load(f)
             print(f"Loaded {len(item_names)} items from cache")
-        except Exception:
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"[ERROR] Failed to load item cache: {e}")
             item_names = {}
     else:
         item_names = {}
+        print("[WARNING] Item cache not found, item names will be unavailable")
+    
     # Auto-update in background
     def updater():
         time.sleep(10)
-        import utils.cache_updater
-        utils.cache_updater.update_cache()
+        try:
+            import utils.cache_updater
+            utils.cache_updater.update_cache()
+        except Exception as e:
+            print(f"[ERROR] Cache updater failed: {e}")
     threading.Thread(target=updater, daemon=True).start()
 
 def fetch_all():
@@ -285,12 +304,17 @@ def fetch_all():
                         **historicals  # Add price historicals
                     })
         
-        top_items = sorted(margins, key=lambda x: x["profit"], reverse=True)[:50]
-        dump_items = sorted(dumps, key=lambda x: x["volume"] * x["drop_pct"], reverse=True)[:20]
-        spike_items = sorted(spikes, key=lambda x: x["rise_pct"], reverse=True)[:20]
+        # Use lock to ensure thread-safe updates to global variables
+        with _item_lock:
+            top_items = sorted(margins, key=lambda x: x["profit"], reverse=True)[:50]
+            dump_items = sorted(dumps, key=lambda x: x["volume"] * x["drop_pct"], reverse=True)[:20]
+            spike_items = sorted(spikes, key=lambda x: x["rise_pct"], reverse=True)[:20]
+            # all_items is already updated in the loop above
         print(f"[+] {len(top_items)} flips | {len(dump_items)} dumps | {len(spike_items)} spikes")
     except Exception as e:
-        print(f"[ERROR] {e}")
+        print(f"[ERROR] fetch_all: {e}")
+        import traceback
+        traceback.print_exc()
 
 def notify(title, items, color):
     if not items:
@@ -368,19 +392,50 @@ def notify(title, items, color):
     threading.Thread(target=webhook.execute).start()
 
 def poll():
+    """Main polling loop with proper error handling"""
     load_names()
-    last_dumps = last_spikes = []
+    last_dumps = []
+    last_spikes = []
+    consecutive_errors = 0
+    max_consecutive_errors = 10
+    
     while True:
-        fetch_all()
-        new_dumps = [d for d in dump_items if d not in last_dumps]
-        new_spikes = [s for s in spike_items if s not in last_spikes]
-        if new_dumps:
-            notify("DUMP DETECTED — BUY THE PANIC", new_dumps, 0x8B0000)
-        if new_spikes:
-            notify("SPIKE DETECTED — SELL NOW", new_spikes, 0x00FF00)
-        last_dumps = dump_items[:10]
-        last_spikes = spike_items[:10]
-        time.sleep(8)
+        try:
+            fetch_all()
+            consecutive_errors = 0  # Reset error counter on success
+            
+            # Thread-safe access to items
+            with _item_lock:
+                current_dumps = dump_items[:10]
+                current_spikes = spike_items[:10]
+            
+            # Find new items (compare by ID to avoid false positives)
+            new_dumps = [d for d in current_dumps if d.get('id') not in [ld.get('id') for ld in last_dumps]]
+            new_spikes = [s for s in current_spikes if s.get('id') not in [ls.get('id') for ls in last_spikes]]
+            
+            if new_dumps:
+                notify("DUMP DETECTED — BUY THE PANIC", new_dumps, 0x8B0000)
+            if new_spikes:
+                notify("SPIKE DETECTED — SELL NOW", new_spikes, 0x00FF00)
+            
+            last_dumps = current_dumps
+            last_spikes = current_spikes
+            
+        except Exception as e:
+            consecutive_errors += 1
+            print(f"[ERROR] poll error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # If too many consecutive errors, wait longer before retrying
+            if consecutive_errors >= max_consecutive_errors:
+                print(f"[ERROR] Too many consecutive errors, waiting 60 seconds before retry")
+                time.sleep(60)
+                consecutive_errors = 0
+            else:
+                time.sleep(8)
+        else:
+            time.sleep(8)
 
 def needs_setup():
     """Check if initial setup is needed"""
@@ -485,24 +540,31 @@ def health_check():
 
 @app.route('/api/top')
 @rate_limit(max_requests=200, window=60)
-def api_top(): 
-    return jsonify(top_items[:20])
+def api_top():
+    """Get top flips with thread-safe access"""
+    with _item_lock:
+        return jsonify(top_items[:20])
 
 @app.route('/api/dumps')
 @rate_limit(max_requests=200, window=60)
-def api_dumps(): 
-    return jsonify(dump_items)
+def api_dumps():
+    """Get dumps with thread-safe access"""
+    with _item_lock:
+        return jsonify(dump_items)
 
 @app.route('/api/spikes')
 @rate_limit(max_requests=200, window=60)
-def api_spikes(): 
-    return jsonify(spike_items)
+def api_spikes():
+    """Get spikes with thread-safe access"""
+    with _item_lock:
+        return jsonify(spike_items)
 
 @app.route('/api/all_items')
 @rate_limit(max_requests=100, window=60)
-def api_all_items(): 
+def api_all_items():
     """API endpoint for volume tracker - returns all items with filtering support"""
-    return jsonify(all_items)
+    with _item_lock:
+        return jsonify(all_items)
 
 @app.route('/api/nightly')
 @rate_limit(max_requests=50, window=60)
@@ -679,7 +741,8 @@ def api_update_cache():
                 "success": False,
                 "message": "Cache update failed. Using existing cache."
             }), 500
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR] api_update_cache: {e}")
         return jsonify({
             "success": False,
             "message": "Error updating cache"
@@ -765,7 +828,8 @@ def server_config(guild_id):
             config["enabled"] = bool(data.get("enabled", True))
             save_config(guild_id, config)
             return jsonify({"status": "saved"})
-        except Exception:
+        except Exception as e:
+            print(f"[ERROR] server_config POST: {e}")
             return jsonify({"error": "Invalid request data"}), 400
     
     # Config page now handled by Next.js frontend at /config/[guildId]
@@ -848,7 +912,8 @@ def setup_test_bot():
             return jsonify({"error": "Failed to connect to Discord API"}), 400
     except requests.exceptions.Timeout:
         return jsonify({"error": "Connection timeout"}), 400
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR] setup_test_bot: {e}")
         return jsonify({"error": "Connection failed"}), 400
 
 @app.route('/api/setup/save-server', methods=['POST'])
@@ -886,7 +951,8 @@ def setup_save_server():
         save_config(guild_id, server_config)
         
         return jsonify({"status": "saved", "guild_id": guild_id})
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR] setup_save_server: {e}")
         return jsonify({"error": "Invalid request data"}), 400
 
 @app.route('/api/setup/save-webhook', methods=['POST'])
@@ -921,7 +987,8 @@ def setup_save_webhook():
                 CONFIG = json.load(f)
         
         return jsonify({"status": "saved"})
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR] setup_save_webhook: {e}")
         return jsonify({"error": "Invalid request data"}), 400
 
 @app.route('/api/setup/complete', methods=['POST'])
@@ -1038,7 +1105,14 @@ def pull_updates():
 
 
 if __name__ == '__main__':
+    # Initialize database on startup
+    try:
+        init_db()
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize database: {e}")
+    
     threading.Thread(target=poll, daemon=True).start()
     # Note: host='0.0.0.0' is required for Docker container networking
     # In production, ensure proper firewall/network security
+    # This is safe when running in Docker with proper network isolation
     app.run(host='0.0.0.0', port=5000)
