@@ -20,33 +20,70 @@ A Discord bot and web dashboard for tracking OSRS Grand Exchange price movements
    cd OSRS-GE-Sniper
    ```
 
-2. **Configure settings**
+2. **Set up Discord Bot**
+   - See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed Discord bot setup instructions
+   - Quick steps:
+     1. Create Discord application at https://discord.com/developers/applications
+     2. Create bot and enable MESSAGE CONTENT INTENT and SERVER MEMBERS INTENT
+     3. Copy bot token and add to `config.json`
+     4. Generate invite link with `bot` and `applications.commands` scopes
+     5. Invite bot to your server with required permissions
+
+3. **Configure settings**
    ```bash
    cp config.json.example config.json
    # Edit config.json with your Discord token, webhook, etc.
    ```
 
-3. **Deploy with Docker**
+4. **Deploy with Docker**
    ```bash
    cd docker
-   docker-compose up -d
+   docker-compose up -d --build
    ```
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 
-## Configuration
+## Discord Bot Setup
 
-### Discord Bot Setup
-1. Create a Discord application at https://discord.com/developers/applications
-2. Create a bot and copy the token
-3. Enable Privileged Gateway Intents:
-   - MESSAGE CONTENT INTENT
-   - SERVER MEMBERS INTENT (if needed)
-4. Invite bot with permissions: Send Messages, Embed Links, Use Slash Commands, Mention Roles
+For complete step-by-step instructions, see [DEPLOYMENT.md](DEPLOYMENT.md#discord-bot-setup).
+
+### Quick Setup Guide
+
+1. **Create Discord Application**
+   - Go to https://discord.com/developers/applications
+   - Click "New Application"
+   - Name your application
+
+2. **Create Bot**
+   - Go to "Bot" section
+   - Click "Add Bot"
+   - Enable **MESSAGE CONTENT INTENT** and **SERVER MEMBERS INTENT**
+   - Copy the bot token
+
+3. **Generate Invite Link**
+   - Go to "OAuth2" → "URL Generator"
+   - Select scopes: `bot` and `applications.commands`
+   - Select permissions: Send Messages, Embed Links, Use Slash Commands, Mention Everyone
+   - Copy the generated URL
+
+4. **Invite Bot**
+   - Open the invite URL in your browser
+   - Select your server and authorize
+
+5. **Configure Bot Token**
+   - Add the bot token to `config.json`:
+   ```json
+   {
+     "discord_token": "YOUR_BOT_TOKEN_HERE",
+     ...
+   }
+   ```
+
+## Configuration
 
 ### Config File
 Edit `config.json`:
-- `discord_token`: Your Discord bot token
+- `discord_token`: Your Discord bot token (from Discord Developer Portal)
 - `discord_webhook`: Optional webhook for backend notifications
 - `backend_url`: Backend URL (use Proxmox IP for production)
 - `admin_key`: Secure random string for admin API access
@@ -55,7 +92,7 @@ Edit `config.json`:
 
 - `/dip` - View top dumps (buy opportunities)
 - `/pump` - View top spikes (sell opportunities)
-- `/flips` - View top profitable flips
+- `/flips [min_gp]` - View top profitable flips
 - `/sniper_config` - Open web dashboard for server configuration
 - `/watch <item>` - Get DMs when item dumps/pumps
 - `/profit <gp>` - Log your flip profit

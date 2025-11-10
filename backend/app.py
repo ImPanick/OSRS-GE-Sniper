@@ -1,16 +1,10 @@
 # backend/app.py
 import requests, time, json, threading
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify, request, redirect, Response
 from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
 import os
 import urllib.parse
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-from utils.database import log_price
-=======
-=======
->>>>>>> Stashed changes
 from utils.database import log_price, get_price_historicals
 import secrets
 from security import (
@@ -18,9 +12,8 @@ from security import (
     validate_json_payload, rate_limit, require_admin_key, escape_html,
     sanitize_string, validate_numeric
 )
->>>>>>> Stashed changes
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 BASE = "https://prices.runescape.wiki/api/v1/osrs"
 HEADERS = {"User-Agent": "OSRS-Sniper-Empire/3.0 (+your-discord)"}
 
@@ -30,7 +23,14 @@ if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
 if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
-CONFIG = json.load(open(CONFIG_PATH))
+
+CONFIG = {}
+if os.path.exists(CONFIG_PATH):
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            CONFIG = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        CONFIG = {}
 
 item_names = {}
 top_items = []
@@ -367,45 +367,227 @@ def poll():
         last_spikes = spike_items[:10]
         time.sleep(8)
 
+def needs_setup():
+    """Check if initial setup is needed"""
+    if not CONFIG:
+        return True
+    
+    # Check if config has placeholder values
+    token = CONFIG.get('discord_token', '')
+    webhook = CONFIG.get('discord_webhook', '')
+    admin_key = CONFIG.get('admin_key', '')
+    
+    # Check for placeholder values
+    if (token in ['YOUR_BOT_TOKEN_HERE', '', None] or
+        admin_key in ['CHANGE_THIS_TO_A_SECURE_RANDOM_STRING', '', None]):
+        return True
+    
+    return False
+
+def is_local_request():
+    """Check if request is from local network (LAN only)"""
+    if not request.remote_addr:
+        return False
+    
+    if request.remote_addr in ['127.0.0.1', 'localhost', '::1']:
+        return True
+    
+    # Check if it's a local IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+    try:
+        ip_parts = request.remote_addr.split('.')
+        if len(ip_parts) == 4:
+            first_octet = ip_parts[0]
+            second_octet = int(ip_parts[1]) if len(ip_parts) > 1 else 0
+            
+            if first_octet == '192' and ip_parts[1] == '168':
+                return True
+            if first_octet == '10':
+                return True
+            if first_octet == '172' and 16 <= second_octet <= 31:
+                return True
+    except (ValueError, IndexError):
+        pass
+    
+    return False
+
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses"""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    # Only add CSP for HTML responses
+    if response.content_type and 'text/html' in response.content_type:
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none';"
+        )
+    return response
+
+@app.before_request
+def check_setup():
+    """Redirect to initial setup if not configured"""
+    # Allow access to setup pages and API endpoints
+    if request.path.startswith('/initial-setup') or request.path.startswith('/api/setup'):
+        return None
+    
+    # Allow access to static files
+    if request.path.startswith('/static'):
+        return None
+    
+    # Check if setup is needed
+    if needs_setup():
+        if request.path != '/initial-setup':
+            return redirect('/initial-setup')
+    
+    # For admin endpoints, check LAN-only access
+    if request.path.startswith('/admin') or request.path.startswith('/config'):
+        if not is_local_request():
+            return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    return None
+
+@app.route('/')
+def index():
+    if needs_setup():
+        return redirect('/initial-setup')
+    return redirect('/dashboard')
+
+@app.route('/initial-setup')
+@rate_limit(max_requests=30, window=60)
+def initial_setup():
+    """Initial setup page"""
+    if not is_local_request():
+        return jsonify({"error": "Setup can only be done from local network"}), 403
+    
+    web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "initial-setup.html")
+    try:
+        with open(web_path, 'r') as f:
+            html = f.read()
+        return render_template_string(html)
+    except IOError:
+        return jsonify({"error": "Setup page not found"}), 404
+
 @app.route('/dashboard')
+@rate_limit(max_requests=100, window=60)
 def dashboard():
     web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dashboard.html")
-    with open(web_path) as f: html = f.read()
-    return render_template_string(html, 
-        top_items=top_items, dump_items=dump_items, spike_items=spike_items)
+    try:
+        with open(web_path, 'r') as f:
+            html = f.read()
+        return render_template_string(html, 
+            top_items=top_items, dump_items=dump_items, spike_items=spike_items)
+    except IOError:
+        return jsonify({"error": "Dashboard not found"}), 404
 
 @app.route('/volume_tracker')
+@rate_limit(max_requests=100, window=60)
 def volume_tracker():
     """Volume tracker page"""
     web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "volume_tracker.html")
-    with open(web_path) as f: html = f.read()
-    return render_template_string(html)
+    try:
+        with open(web_path, 'r') as f:
+            html = f.read()
+        return render_template_string(html)
+    except IOError:
+        return jsonify({"error": "Volume tracker not found"}), 404
 
 @app.route('/api/top')
-def api_top(): return jsonify(top_items[:20])
+@rate_limit(max_requests=200, window=60)
+def api_top(): 
+    return jsonify(top_items[:20])
+
 @app.route('/api/dumps')
-def api_dumps(): return jsonify(dump_items)
+@rate_limit(max_requests=200, window=60)
+def api_dumps(): 
+    return jsonify(dump_items)
+
 @app.route('/api/spikes')
-def api_spikes(): return jsonify(spike_items)
+@rate_limit(max_requests=200, window=60)
+def api_spikes(): 
+    return jsonify(spike_items)
+
 @app.route('/api/all_items')
+@rate_limit(max_requests=100, window=60)
 def api_all_items(): 
     """API endpoint for volume tracker - returns all items with filtering support"""
     return jsonify(all_items)
 
+@app.route('/api/update_cache', methods=['POST'])
+@require_admin_key()
+@rate_limit(max_requests=5, window=300)
+def api_update_cache():
+    """Manually trigger cache update from the internet"""
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    try:
+        import utils.cache_updater
+        item_map = utils.cache_updater.update_cache()
+        
+        # Reload names after update
+        load_names()
+        
+        if item_map:
+            return jsonify({
+                "success": True,
+                "message": f"Cache updated successfully! {len(item_map)} items cached.",
+                "item_count": len(item_map)
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Cache update failed. Using existing cache."
+            }), 500
+    except Exception:
+        return jsonify({
+            "success": False,
+            "message": "Error updating cache"
+        }), 500
+
 @app.route('/api/server_config/<guild_id>', methods=['GET'])
+@rate_limit(max_requests=100, window=60)
 def api_server_config(guild_id):
     """API endpoint for bot to fetch server config"""
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
     if is_banned(guild_id):
         return jsonify({"error": "banned"}), 403
+    
     config = get_config(guild_id)
     return jsonify(config)
 
 @app.route('/api/server_banned/<guild_id>', methods=['GET'])
+@rate_limit(max_requests=100, window=60)
 def api_server_banned(guild_id):
     """API endpoint for bot to check if server is banned"""
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"banned": False})  # Return False for invalid IDs
+    
     return jsonify({"banned": is_banned(guild_id)})
 @app.route('/config/<guild_id>', methods=['GET', 'POST'])
+@rate_limit(max_requests=30, window=60)
 def server_config(guild_id):
+    # LAN-only access for configuration
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Configuration interface is LAN-only."}), 403
+    
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
     # Check if server is banned
     if is_banned(guild_id):
         return jsonify({"error": "This server has been banned from using the sniper bot."}), 403
@@ -417,25 +599,220 @@ def server_config(guild_id):
         config["roles"] = {}
     
     if request.method == 'POST':
-        data = request.json
-        config["channels"] = data.get("channels", config["channels"])
-        config["roles"] = data.get("roles", config.get("roles", {}))
-        config["thresholds"] = data.get("thresholds", config["thresholds"])
-        config["enabled"] = data.get("enabled", True)
-        save_config(guild_id, config)
-        return jsonify({"status": "saved"})
+        try:
+            data = request.get_json(force=True)
+            if not data:
+                return jsonify({"error": "Invalid JSON"}), 400
+            
+            # Sanitize channel inputs
+            channels = {}
+            if 'channels' in data:
+                for key, value in data.get('channels', {}).items():
+                    if value:
+                        sanitized = sanitize_channel_id(str(value))
+                        if sanitized:
+                            channels[key] = sanitized
+                        else:
+                            channels[key] = None
+                    else:
+                        channels[key] = None
+            
+            # Validate thresholds
+            thresholds = config.get("thresholds", {})
+            if 'thresholds' in data:
+                for key, value in data.get('thresholds', {}).items():
+                    num_val = validate_numeric(value, min_val=0)
+                    if num_val is not None:
+                        thresholds[key] = num_val
+            
+            config["channels"] = channels
+            config["thresholds"] = thresholds
+            config["roles"] = data.get("roles", config.get("roles", {}))
+            config["enabled"] = bool(data.get("enabled", True))
+            save_config(guild_id, config)
+            return jsonify({"status": "saved"})
+        except Exception as e:
+            return jsonify({"error": "Invalid request data"}), 400
     
     web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "config.html")
-    with open(web_path) as f:
-        html = f.read()
-    return render_template_string(html, config=config, guild_id=guild_id)
+    try:
+        with open(web_path, 'r') as f:
+            html = f.read()
+        # Escape guild_id to prevent XSS
+        safe_guild_id = escape_html(guild_id)
+        return render_template_string(html, config=config, guild_id=safe_guild_id)
+    except IOError:
+        return jsonify({"error": "Configuration page not found"}), 404
 
-# Admin endpoints
+# Setup API endpoints
+@app.route('/api/setup/save-token', methods=['POST'])
+@validate_json_payload(max_size=5000)
+@rate_limit(max_requests=5, window=300)  # 5 attempts per 5 minutes
+def setup_save_token():
+    """Save Discord bot token"""
+    if not is_local_request():
+        return jsonify({"error": "Setup can only be done from local network"}), 403
+    
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        token = data.get('discord_token', '').strip()
+        
+        # Validate token format
+        token = sanitize_token(token)
+        if not token:
+            return jsonify({"error": "Invalid token format"}), 400
+        
+        CONFIG['discord_token'] = token
+        
+        # Generate admin key if not set
+        if not CONFIG.get('admin_key') or CONFIG.get('admin_key') == 'CHANGE_THIS_TO_A_SECURE_RANDOM_STRING':
+            CONFIG['admin_key'] = secrets.token_urlsafe(32)
+        
+        # Save config
+        try:
+            with open(CONFIG_PATH, 'w') as f:
+                json.dump(CONFIG, f, indent=2)
+        except IOError:
+            return jsonify({"error": "Failed to save configuration"}), 500
+        
+        # Reload global CONFIG
+        global CONFIG
+        with open(CONFIG_PATH, 'r') as f:
+            CONFIG = json.load(f)
+        
+        return jsonify({"status": "saved"})
+    except Exception as e:
+        return jsonify({"error": "Invalid request"}), 400
+
+@app.route('/api/setup/test-bot', methods=['GET'])
+@rate_limit(max_requests=10, window=60)
+def setup_test_bot():
+    """Test Discord bot connection"""
+    if not is_local_request():
+        return jsonify({"error": "Setup can only be done from local network"}), 403
+    
+    token = CONFIG.get('discord_token', '')
+    
+    if not token or token == 'YOUR_BOT_TOKEN_HERE':
+        return jsonify({"error": "Bot token not configured"}), 400
+    
+    # Validate token format
+    if not sanitize_token(token):
+        return jsonify({"error": "Invalid token format"}), 400
+    
+    try:
+        # Test bot connection via Discord API
+        headers = {"Authorization": f"Bot {token}"}
+        response = requests.get("https://discord.com/api/v10/users/@me", headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            bot_data = response.json()
+            return jsonify({
+                "success": True,
+                "bot_username": escape_html(bot_data.get('username', 'Unknown')),
+                "bot_id": bot_data.get('id', 'Unknown')
+            })
+        else:
+            # Don't leak detailed error info
+            return jsonify({"error": "Failed to connect to Discord API"}), 400
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "Connection timeout"}), 400
+    except Exception:
+        return jsonify({"error": "Connection failed"}), 400
+
+@app.route('/api/setup/save-server', methods=['POST'])
+@validate_json_payload(max_size=10000)
+@rate_limit(max_requests=10, window=60)
+def setup_save_server():
+    """Save first server configuration"""
+    if not is_local_request():
+        return jsonify({"error": "Setup can only be done from local network"}), 403
+    
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        guild_id = data.get('guild_id', '').strip()
+        guild_id = sanitize_guild_id(guild_id)
+        
+        if not guild_id:
+            return jsonify({"error": "Invalid server ID"}), 400
+        
+        # Sanitize channel inputs
+        channels = {}
+        if 'channels' in data:
+            for key, value in data.get('channels', {}).items():
+                if value:
+                    sanitized = sanitize_channel_id(str(value))
+                    channels[key] = sanitized if sanitized else None
+                else:
+                    channels[key] = None
+        
+        # Create server config
+        server_config = get_config(guild_id)
+        server_config['channels'] = channels
+        save_config(guild_id, server_config)
+        
+        return jsonify({"status": "saved", "guild_id": guild_id})
+    except Exception:
+        return jsonify({"error": "Invalid request data"}), 400
+
+@app.route('/api/setup/save-webhook', methods=['POST'])
+@validate_json_payload(max_size=1000)
+@rate_limit(max_requests=10, window=60)
+def setup_save_webhook():
+    """Save Discord webhook"""
+    if not is_local_request():
+        return jsonify({"error": "Setup can only be done from local network"}), 403
+    
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        webhook = data.get('discord_webhook', '').strip()
+        
+        if webhook:
+            webhook = sanitize_webhook_url(webhook)
+            if not webhook:
+                return jsonify({"error": "Invalid webhook URL"}), 400
+            
+            CONFIG['discord_webhook'] = webhook
+            try:
+                with open(CONFIG_PATH, 'w') as f:
+                    json.dump(CONFIG, f, indent=2)
+            except IOError:
+                return jsonify({"error": "Failed to save configuration"}), 500
+            
+            global CONFIG
+            with open(CONFIG_PATH, 'r') as f:
+                CONFIG = json.load(f)
+        
+        return jsonify({"status": "saved"})
+    except Exception:
+        return jsonify({"error": "Invalid request data"}), 400
+
+@app.route('/api/setup/complete', methods=['POST'])
+@rate_limit(max_requests=10, window=60)
+def setup_complete():
+    """Mark setup as complete"""
+    if not is_local_request():
+        return jsonify({"error": "Setup can only be done from local network"}), 403
+    
+    # Setup is complete when config is saved
+    return jsonify({"status": "complete"})
+
+# Admin endpoints (LAN-only)
 @app.route('/admin/servers', methods=['GET'])
+@require_admin_key()
+@rate_limit(max_requests=30, window=60)
 def admin_list_servers():
-    admin_key = request.headers.get('X-Admin-Key')
-    if admin_key != CONFIG.get('admin_key'):
-        return jsonify({"error": "Unauthorized"}), 401
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
     
     servers = list_servers()
     server_data = []
@@ -450,40 +827,66 @@ def admin_list_servers():
     return jsonify(server_data)
 
 @app.route('/admin/ban/<guild_id>', methods=['POST'])
+@require_admin_key()
+@rate_limit(max_requests=20, window=60)
 def admin_ban_server(guild_id):
-    admin_key = request.headers.get('X-Admin-Key')
-    if admin_key != CONFIG.get('admin_key'):
-        return jsonify({"error": "Unauthorized"}), 401
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
     
     ban_server(guild_id)
     return jsonify({"status": "banned", "guild_id": guild_id})
 
 @app.route('/admin/unban/<guild_id>', methods=['POST'])
+@require_admin_key()
+@rate_limit(max_requests=20, window=60)
 def admin_unban_server(guild_id):
-    admin_key = request.headers.get('X-Admin-Key')
-    if admin_key != CONFIG.get('admin_key'):
-        return jsonify({"error": "Unauthorized"}), 401
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
     
     unban_server(guild_id)
     return jsonify({"status": "unbanned", "guild_id": guild_id})
 
 @app.route('/admin/delete/<guild_id>', methods=['DELETE'])
+@require_admin_key()
+@rate_limit(max_requests=10, window=60)
 def admin_delete_server(guild_id):
-    admin_key = request.headers.get('X-Admin-Key')
-    if admin_key != CONFIG.get('admin_key'):
-        return jsonify({"error": "Unauthorized"}), 401
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
     
     from config_manager import delete_config
     delete_config(guild_id)
     return jsonify({"status": "deleted", "guild_id": guild_id})
 
 @app.route('/admin')
+@rate_limit(max_requests=30, window=60)
 def admin_panel():
-    """Admin web interface"""
+    """Admin web interface (LAN-only)"""
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
     web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "admin.html")
-    with open(web_path) as f:
-        html = f.read()
-    return render_template_string(html)
+    try:
+        with open(web_path, 'r') as f:
+            html = f.read()
+        return render_template_string(html)
+    except IOError:
+        return jsonify({"error": "Admin page not found"}), 404
+
 
 if __name__ == '__main__':
     threading.Thread(target=poll, daemon=True).start()
