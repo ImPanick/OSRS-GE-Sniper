@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GE Sniper Config - {{ guild_id }}</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { background:#000; color:#0f0; font-family:Arial; padding:20px; }
+    .card { background:#001100; border:2px solid #0f0; padding:20px; margin:20px 0; border-radius:10px; }
+    input, select { background:#000; color:#0f0; border:1px solid #0f0; padding:8px; width:100%; margin:10px 0; }
+    button { background:#0f0; color:#000; padding:15px; font-weight:bold; border:none; width:100%; cursor:pointer; }
+    button:hover { background:#00ff00; }
+    .channel-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  </style>
+</head>
+<body>
+  <h1>SNIPER CONFIG — GUILD {{ guild_id }}</h1>
+  <div class="card">
+    <h2>CHANNEL ROUTING</h2>
+    <div class="channel-grid">
+      <div>
+        <label>Cheap Flips (&lt; {{ (config.thresholds.cheap_max / 1000)|int }}k)</label>
+        <input type="text" id="cheap_flips" placeholder="#cheap-flips" value="{{ config.channels.cheap_flips or '' }}">
+      </div>
+      <div>
+        <label>Medium Flips ({{ (config.thresholds.cheap_max / 1000)|int }}k - {{ (config.thresholds.medium_max / 1000)|int }}k)</label>
+        <input type="text" id="medium_flips" value="{{ config.channels.medium_flips or '' }}">
+      </div>
+      <div>
+        <label>Expensive Flips ({{ (config.thresholds.medium_max / 1000)|int }}k - {{ (config.thresholds.expensive_max / 1000000)|int }}M)</label>
+        <input type="text" id="expensive_flips" value="{{ config.channels.expensive_flips or '' }}">
+      </div>
+      <div>
+        <label>Billionaire Flips (&gt; {{ (config.thresholds.expensive_max / 1000000)|int }}M)</label>
+        <input type="text" id="billionaire_flips" value="{{ config.channels.billionaire_flips or '' }}">
+      </div>
+      <div>
+        <label>Recipe Items (Herbs, Secondaries, etc)</label>
+        <input type="text" id="recipe_items" value="{{ config.channels.recipe_items or '' }}">
+      </div>
+      <div>
+        <label>High-Alch Margins</label>
+        <input type="text" id="high_alch_margins" value="{{ config.channels.high_alch_margins or '' }}">
+      </div>
+      <div>
+        <label>High Limit + Volume Items</label>
+        <input type="text" id="high_limit_items" value="{{ config.channels.high_limit_items or '' }}">
+      </div>
+    </div>
+    <br>
+    <button onclick="save()">SAVE CONFIG</button>
+  </div>
+
+  <script>
+    function save() {
+      const config = {
+        channels: {
+          cheap_flips: document.getElementById('cheap_flips').value || null,
+          medium_flips: document.getElementById('medium_flips').value || null,
+          expensive_flips: document.getElementById('expensive_flips').value || null,
+          billionaire_flips: document.getElementById('billionaire_flips').value || null,
+          recipe_items: document.getElementById('recipe_items').value || null,
+          high_alch_margins: document.getElementById('high_alch_margins').value || null,
+          high_limit_items: document.getElementById('high_limit_items').value || null
+        }
+      }
+      fetch(`/config/{{ guild_id }}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(config)
+      }).then(r => alert("Config saved!"))
+    }
+
+  </script>
+</body>
+</html>

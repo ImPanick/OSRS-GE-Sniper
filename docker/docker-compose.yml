@@ -1,0 +1,19 @@
+version: '3.8'
+services:
+  backend:
+    build: ./backend
+    ports: ["5000:5000"]
+    volumes: ["./backend/utils:/app/utils"]
+    depends_on: [cache-updater]
+    restart: unless-stopped
+
+  bot:
+    build: ./discord-bot
+    depends_on: [backend]
+    restart: unless-stopped
+
+  cache-updater:
+    build: ./backend
+    command: python utils/cache_updater.py
+    volumes: ["./backend/utils:/app/utils"]
+    restart: unless-stopped

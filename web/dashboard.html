@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OSRS Sniper Empire</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="manifest" href="data:application/manifest+json,{\"name\":\"Sniper\",\"start_url\":\".\"}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>OSRS SNIPER EMPIRE</h1>
+  <nav style="margin:20px 0; text-align:center;">
+    <a href="/dashboard" style="color:#0f0; margin:0 15px; text-decoration:none; border:1px solid #0f0; padding:8px 15px; border-radius:5px;">Dashboard</a>
+    <a href="/volume_tracker" style="color:#0f0; margin:0 15px; text-decoration:none; border:1px solid #0f0; padding:8px 15px; border-radius:5px;">📊 Volume Tracker</a>
+  </nav>
+  <div class="container">
+    <div class="card">
+      <h2>Top Flips</h2>
+      <table><tr><th>Item</th><th>Profit</th><th>ROI%</th></tr>
+      {% for item in top_items %}
+      <tr><td>{{ item.name }}</td><td class="profit">{{ "%.1f"|format(item.profit/1e6) }}M</td><td>{{ "%.1f"|format(item.roi) }}%</td></tr>
+      {% endfor %}</table>
+    </div>
+    <div class="card">
+      <h2>Dumps (Buy)</h2>
+      <table><tr><th>Item</th><th>Drop</th><th>Quality</th><th>Vol</th></tr>
+      {% for item in dump_items %}
+      <tr><td class="dump">{{ item.name }}</td>
+          <td class="dump">-{{ "%.1f"|format(item.drop_pct) }}%</td>
+          <td class="dump {{ 'quality-fire' if '🔥' in item.quality else 'quality-5' if '⭐⭐⭐⭐⭐' in item.quality else '' }}">{{ item.quality }}</td>
+          <td class="dump {{ 'nuclear' if 'NUCLEAR' in item.quality else 'quality-5' if 'GOD-TIER' in item.quality_label else '' }}">{{ item.quality }}</td>
+          <td>{{ item.volume|int }}</td></tr>
+      {% endfor %}</table>
+    </div>
+    <div class="card">
+      <h2>Spikes (Sell)</h2>
+      <table><tr><th>Item</th><th>Rise</th><th>Vol</th></tr>
+      {% for item in spike_items %}
+      <tr><td class="spike">{{ item.name }}</td><td>+{{ "%.1f"|format(item.rise_pct) }}%</td><td>{{ item.volume|int }}</td></tr>
+      {% endfor %}</table>
+    </div>
+  </div>
+  <footer>Refreshes every 10s — Built Nov 10 2025</footer>
+  <script>setInterval(()=>location.reload(), 10000);</script>
+</body>
+</html>

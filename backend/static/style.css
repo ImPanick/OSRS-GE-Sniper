@@ -1,0 +1,29 @@
+:root {
+    --bg: #000;
+    --text: #0f0;
+    --card: #001100;
+    --border: #0f0;
+    --profit: #00ff00;
+    --dump: #ff0066;
+    --spike: #00ffff;
+  }
+  
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; padding: 15px; }
+  h1, h2 { text-align:center; text-shadow: 0 0 10px #0f0; margin:20px 0; }
+  .container { display:flex; flex-wrap:wrap; gap:20px; justify-content:center; }
+  .card { background: var(--card); border: 2px solid var(--border); border-radius: 12px; padding: 20px; flex: 1; min-width: 320px; max-width: 480px; box-shadow: 0 0 20px rgba(0,255,0,0.3); }
+  table { width:100%; border-collapse:collapse; margin-top:10px; }
+  th, td { border:1px solid var(--border); padding:10px; text-align:center; }
+  th { background:rgba(0,255,0,0.1); }
+  .profit { color:var(--profit); font-weight:bold; }
+  .dump { color:var(--dump); font-weight:bold; animation: pulse 1s infinite; }
+  .spike { color:var(--spike); font-weight:bold; }
+  .quality-5 { animation: god-tier 2s infinite; text-shadow: 0 0 20px #ff00ff; }
+  .quality-fire { animation: nuclear 1s infinite; text-shadow: 0 0 30px #ff4400; }
+  .nuclear { animation: nuclear-glow 1.5s infinite; font-size: 1.4em; text-shadow: 0 0 20px #ff0066, 0 0 40px #ff0000; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.7; } }
+  @keyframes god-tier { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+  @keyframes nuclear { 0%,100% { transform: scale(1) rotate(0deg); } 25% { transform: scale(1.2) rotate(5deg); } 75% { transform: scale(1.2) rotate(-5deg); } }
+  @keyframes nuclear-glow { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+  footer { text-align:center; margin-top:40px; font-size:0.8em; opacity:0.7; }
