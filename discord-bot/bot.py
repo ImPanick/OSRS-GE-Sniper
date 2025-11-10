@@ -59,13 +59,42 @@ async def poll_alerts():
                 
                 risk_info = f"\n⚠️ **Risk:** {risk_level} ({risk_score:.1f}/100) | **Confidence:** {profitability_confidence:.1f}%"
                 
+                # Build price historicals
+                historicals_text = ""
+                avg_7d = item.get('avg_7d')
+                avg_24h = item.get('avg_24h')
+                avg_12h = item.get('avg_12h')
+                avg_6h = item.get('avg_6h')
+                avg_1h = item.get('avg_1h')
+                prev_price = item.get('prev_price')
+                prev_timestamp = item.get('prev_timestamp')
+                
+                if avg_7d or avg_24h or avg_12h or avg_6h or avg_1h or prev_price:
+                    historicals_text = "\n\n📊 **Price Historicals:**\n"
+                    if avg_7d:
+                        historicals_text += f"7d: {avg_7d:,} GP | "
+                    if avg_24h:
+                        historicals_text += f"24h: {avg_24h:,} GP | "
+                    if avg_12h:
+                        historicals_text += f"12h: {avg_12h:,} GP | "
+                    if avg_6h:
+                        historicals_text += f"6h: {avg_6h:,} GP | "
+                    if avg_1h:
+                        historicals_text += f"1h: {avg_1h:,} GP"
+                    if prev_price:
+                        from datetime import datetime
+                        if prev_timestamp:
+                            hours_ago = (datetime.now().timestamp() - prev_timestamp) / 3600
+                            historicals_text += f"\nPrev: {prev_price:,} GP ({hours_ago:.1f} hours ago)"
+                
                 embed = discord.Embed(
                     title=f"🔥 DUMP: {item_name}",
                     description=f"**{item.get('drop_pct', 0):.1f}% DROP**\n"
                               f"{price_desc}\n"
                               f"Vol: {item.get('volume', 0):,}\n"
                               f"{item.get('quality_label', '')}"
-                              f"{risk_info}",
+                              f"{risk_info}"
+                              f"{historicals_text}",
                     color=0x8B0000,
                     url=get_item_wiki_url(item_id)
                 )
@@ -103,12 +132,41 @@ async def poll_alerts():
                 
                 risk_info = f"\n⚠️ **Risk:** {risk_level} ({risk_score:.1f}/100) | **Confidence:** {profitability_confidence:.1f}%"
                 
+                # Build price historicals
+                historicals_text = ""
+                avg_7d = item.get('avg_7d')
+                avg_24h = item.get('avg_24h')
+                avg_12h = item.get('avg_12h')
+                avg_6h = item.get('avg_6h')
+                avg_1h = item.get('avg_1h')
+                prev_price = item.get('prev_price')
+                prev_timestamp = item.get('prev_timestamp')
+                
+                if avg_7d or avg_24h or avg_12h or avg_6h or avg_1h or prev_price:
+                    historicals_text = "\n\n📊 **Price Historicals:**\n"
+                    if avg_7d:
+                        historicals_text += f"7d: {avg_7d:,} GP | "
+                    if avg_24h:
+                        historicals_text += f"24h: {avg_24h:,} GP | "
+                    if avg_12h:
+                        historicals_text += f"12h: {avg_12h:,} GP | "
+                    if avg_6h:
+                        historicals_text += f"6h: {avg_6h:,} GP | "
+                    if avg_1h:
+                        historicals_text += f"1h: {avg_1h:,} GP"
+                    if prev_price:
+                        from datetime import datetime
+                        if prev_timestamp:
+                            hours_ago = (datetime.now().timestamp() - prev_timestamp) / 3600
+                            historicals_text += f"\nPrev: {prev_price:,} GP ({hours_ago:.1f} hours ago)"
+                
                 embed = discord.Embed(
                     title=f"📈 SPIKE: {item_name}",
                     description=f"**+{item.get('rise_pct', 0):.1f}% RISE**\n"
                               f"{price_desc}\n"
                               f"Vol: {item.get('volume', 0):,}"
-                              f"{risk_info}",
+                              f"{risk_info}"
+                              f"{historicals_text}",
                     color=0x00FF00,
                     url=get_item_wiki_url(item_id)
                 )

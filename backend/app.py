@@ -5,7 +5,17 @@ from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
 import os
 import urllib.parse
+<<<<<<< Updated upstream
 from utils.database import log_price
+=======
+from utils.database import log_price, get_price_historicals
+import secrets
+from security import (
+    sanitize_guild_id, sanitize_channel_id, sanitize_webhook_url, sanitize_token,
+    validate_json_payload, rate_limit, require_admin_key, escape_html,
+    sanitize_string, validate_numeric
+)
+>>>>>>> Stashed changes
 
 app = Flask(__name__)
 BASE = "https://prices.runescape.wiki/api/v1/osrs"
@@ -191,11 +201,14 @@ def fetch_all():
             
             # === MARGINS ===
             if profit > CONFIG["thresholds"]["margin_min"] and low > 1000:
+                # Get price historicals for margins/flips
+                historicals = get_price_historicals(int(id_str))
                 margins.append({
                     "id": int(id_str), "name": name, "buy": low, "sell": high,
                     "insta_buy": insta_buy, "insta_sell": insta_sell,
                     "profit": profit, "roi": roi, "volume": vol, "limit": limit,
-                    **risk_metrics  # Add risk metrics to margins
+                    **risk_metrics,  # Add risk metrics to margins
+                    **historicals  # Add price historicals
                 })
             
             # === DUMPS & SPIKES ===
@@ -214,10 +227,13 @@ def fetch_all():
                     quality_stars, quality_label = get_dump_quality(drop_pct, vol, low)
                     # Calculate risk for dumps
                     dump_risk = calculate_risk_metrics(low, high, insta_buy, insta_sell, vol, limit, profit)
+                    # Get price historicals
+                    historicals = get_price_historicals(int(id_str))
                     dumps.append({
                         "id": int(id_str),
                         "name": name,
                         "buy": low,
+                        "sell": high,
                         "drop_pct": drop_pct,
                         "volume": vol,
                         "prev": prev_avg,
@@ -229,16 +245,20 @@ def fetch_all():
                         "max_profit_4h": max_profit_4h,
                         "realistic_profit": realistic_profit,
                         "cost_per_limit": low * limit,
-                        **dump_risk  # Add risk metrics
+                        **dump_risk,  # Add risk metrics
+                        **historicals  # Add price historicals
                     })
 
                 # === SPIKE DETECTION ===
                 if rise_pct > CONFIG["thresholds"]["spike_rise_pct"]:
                     # Calculate risk for spikes
                     spike_risk = calculate_risk_metrics(low, high, insta_buy, insta_sell, vol, limit, profit)
+                    # Get price historicals
+                    historicals = get_price_historicals(int(id_str))
                     spikes.append({
                         "id": int(id_str),
                         "name": name,
+                        "buy": low,
                         "sell": high,
                         "rise_pct": rise_pct,
                         "volume": vol,
@@ -246,7 +266,8 @@ def fetch_all():
                         "limit": limit,
                         "insta_buy": insta_buy,
                         "insta_sell": insta_sell,
-                        **spike_risk  # Add risk metrics
+                        **spike_risk,  # Add risk metrics
+                        **historicals  # Add price historicals
                     })
         
         top_items = sorted(margins, key=lambda x: x["profit"], reverse=True)[:50]
@@ -283,13 +304,42 @@ def notify(title, items, color):
         
         risk_info = f"\n**Risk:** {risk_level} ({risk_score:.1f}/100) | **Confidence:** {profitability_confidence:.1f}% | **Liquidity:** {liquidity_score:.1f}%"
         
+        # Build price historicals
+        historicals_text = ""
+        avg_7d = item.get('avg_7d')
+        avg_24h = item.get('avg_24h')
+        avg_12h = item.get('avg_12h')
+        avg_6h = item.get('avg_6h')
+        avg_1h = item.get('avg_1h')
+        prev_price = item.get('prev_price')
+        prev_timestamp = item.get('prev_timestamp')
+        
+        if avg_7d or avg_24h or avg_12h or avg_6h or avg_1h or prev_price:
+            historicals_text = "\n\n**Price Historicals:**\n"
+            if avg_7d:
+                historicals_text += f"7d: {avg_7d:,} GP | "
+            if avg_24h:
+                historicals_text += f"24h: {avg_24h:,} GP | "
+            if avg_12h:
+                historicals_text += f"12h: {avg_12h:,} GP | "
+            if avg_6h:
+                historicals_text += f"6h: {avg_6h:,} GP | "
+            if avg_1h:
+                historicals_text += f"1h: {avg_1h:,} GP"
+            if prev_price:
+                from datetime import datetime
+                if prev_timestamp:
+                    hours_ago = (datetime.now().timestamp() - prev_timestamp) / 3600
+                    historicals_text += f"\nPrev: {prev_price:,} GP ({hours_ago:.1f} hours ago)"
+        
         embed = {
             "title": f"{title} {item.get('quality', '')}",
             "description": f"**{item_name}**\n"
                           f"{price_desc}\n"
                           f"Move: {item.get('drop_pct', item.get('rise_pct', 0)):.1f}%\n"
                           f"Vol: **{item['volume']:,}** | {item.get('quality_label', '')}"
-                          f"{risk_info}",
+                          f"{risk_info}"
+                          f"{historicals_text}",
             "url": f"https://prices.runescape.wiki/osrs/item/{item_id}",
             "color": color
         }
