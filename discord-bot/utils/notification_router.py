@@ -24,7 +24,7 @@ def get_server_config(guild_id: str):
         response = requests.get(f"{backend_url}/api/server_config/{guild_id}", timeout=2)
         if response.status_code == 200:
             return response.json()
-    except:
+    except Exception:
         pass
     return None
 

@@ -17,10 +17,6 @@ export default function ConfigPage() {
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<string>('')
 
-  useEffect(() => {
-    fetchConfig()
-  }, [guildId])
-
   const fetchConfig = async () => {
     try {
       const response = await axios.get(`${API_URL}/config/${guildId}`)
@@ -36,6 +32,11 @@ export default function ConfigPage() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    fetchConfig()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guildId])
 
   const saveConfig = async () => {
     if (!config) return

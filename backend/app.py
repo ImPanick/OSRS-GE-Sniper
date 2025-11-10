@@ -1,6 +1,9 @@
 # backend/app.py
-import requests, time, json, threading
-from flask import Flask, jsonify, request, redirect, Response
+import requests
+import time
+import json
+import threading
+from flask import Flask, jsonify, request, redirect
 from flask_cors import CORS
 from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
@@ -11,7 +14,7 @@ import secrets
 from security import (
     sanitize_guild_id, sanitize_channel_id, sanitize_webhook_url, sanitize_token,
     validate_json_payload, rate_limit, require_admin_key, escape_html,
-    sanitize_string, validate_numeric
+    validate_numeric
 )
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
@@ -133,12 +136,18 @@ def get_dump_quality(drop_pct, volume, low_price):
     if volume > 1_500_000:
         return "NUCLEAR DUMP", "WHALE PANIC — 1.5M+ DUMPED"
     score = (drop_pct / 10) * (volume / 1000) * (low_price / 1_000_000)
-    if score >= 100: return "GOD-TIER", "INSANE BUY OPPORTUNITY"
-    elif score >= 40: return "ELITE", "HIGH VOLUME CRASH"
-    elif score >= 15: return "PREMIUM", "STRONG DUMP"
-    elif score >= 5: return "GOOD", "SOLID DIP"
-    elif score >= 1: return "DEAL", "WORTH A LOOK"
-    else: return "", ""
+    if score >= 100:
+        return "GOD-TIER", "INSANE BUY OPPORTUNITY"
+    elif score >= 40:
+        return "ELITE", "HIGH VOLUME CRASH"
+    elif score >= 15:
+        return "PREMIUM", "STRONG DUMP"
+    elif score >= 5:
+        return "GOOD", "SOLID DIP"
+    elif score >= 1:
+        return "DEAL", "WORTH A LOOK"
+    else:
+        return "", ""
 
 def load_names():
     global item_names
@@ -147,7 +156,7 @@ def load_names():
         try:
             item_names = json.load(open(cache_path))
             print(f"Loaded {len(item_names)} items from cache")
-        except:
+        except Exception:
             item_names = {}
     else:
         item_names = {}
@@ -161,16 +170,17 @@ def load_names():
 def fetch_all():
     global top_items, dump_items, spike_items, all_items
     try:
-        latest = requests.get(f"{BASE}/latest", headers=HEADERS).json()
-        h1 = requests.get(f"{BASE}/1h", headers=HEADERS).json()
-        mapping = requests.get(f"{BASE}/mapping", headers=HEADERS).json()
+        latest = requests.get(f"{BASE}/latest", headers=HEADERS, timeout=30).json()
+        h1 = requests.get(f"{BASE}/1h", headers=HEADERS, timeout=30).json()
+        mapping = requests.get(f"{BASE}/mapping", headers=HEADERS, timeout=30).json()
         
         # Build ID → limit map
         limit_map = {str(m['id']): m.get('limit', 0) for m in mapping}
         
         margins, dumps, spikes, all_items = [], [], [], []
         for id_str, data in latest.get("data", {}).items():
-            if not data.get("high") or not data.get("low"): continue
+            if not data.get("high") or not data.get("low"):
+                continue
             low, high = data["low"], data["high"]
             name = item_names.get(id_str, f"Item {id_str}")
             vol = h1.get(id_str, {}).get("volume", 0) or 1
@@ -283,7 +293,8 @@ def fetch_all():
         print(f"[ERROR] {e}")
 
 def notify(title, items, color):
-    if not items: return
+    if not items:
+        return
     webhook = DiscordWebhook(url=CONFIG["discord_webhook"], rate_limit_retry=True)
     for item in items[:5]:
         item_name = item.get('name', 'Unknown')
@@ -363,8 +374,10 @@ def poll():
         fetch_all()
         new_dumps = [d for d in dump_items if d not in last_dumps]
         new_spikes = [s for s in spike_items if s not in last_spikes]
-        if new_dumps: notify("DUMP DETECTED — BUY THE PANIC", new_dumps, 0x8B0000)
-        if new_spikes: notify("SPIKE DETECTED — SELL NOW", new_spikes, 0x00FF00)
+        if new_dumps:
+            notify("DUMP DETECTED — BUY THE PANIC", new_dumps, 0x8B0000)
+        if new_spikes:
+            notify("SPIKE DETECTED — SELL NOW", new_spikes, 0x00FF00)
         last_dumps = dump_items[:10]
         last_spikes = spike_items[:10]
         time.sleep(8)
@@ -376,7 +389,6 @@ def needs_setup():
     
     # Check if config has placeholder values
     token = CONFIG.get('discord_token', '')
-    webhook = CONFIG.get('discord_webhook', '')
     admin_key = CONFIG.get('admin_key', '')
     
     # Check for placeholder values
@@ -604,7 +616,7 @@ def server_config(guild_id):
             config["enabled"] = bool(data.get("enabled", True))
             save_config(guild_id, config)
             return jsonify({"status": "saved"})
-        except Exception as e:
+        except Exception:
             return jsonify({"error": "Invalid request data"}), 400
     
     # Config page now handled by Next.js frontend at /config/[guildId]
@@ -847,7 +859,7 @@ def admin_delete_server(guild_id):
 def check_updates():
     """Check if updates are available"""
     try:
-        from utils.auto_updater import check_for_updates, get_update_status
+        from utils.auto_updater import get_update_status
         status = get_update_status()
         return jsonify(status)
     except Exception as e:
@@ -878,4 +890,6 @@ def pull_updates():
 
 if __name__ == '__main__':
     threading.Thread(target=poll, daemon=True).start()
+    # Note: host='0.0.0.0' is required for Docker container networking
+    # In production, ensure proper firewall/network security
     app.run(host='0.0.0.0', port=5000)

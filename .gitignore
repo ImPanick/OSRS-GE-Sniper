@@ -8,6 +8,10 @@ env/
 venv/
 ENV/
 .venv
+*.egg-info/
+dist/
+build/
+*.egg
 
 # Sensitive config files
 config.json
@@ -21,22 +25,127 @@ backend/utils/item_cache.json
 backend/utils/*.db
 backend/utils/*.sqlite
 discord-bot/data/
+update_log.json
 
-# IDE
+# Node.js / Next.js / Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Next.js
+.next/
+out/
+build/
+dist/
+.vercel
+.vercelignore
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Tailwind CSS
+.tailwindcss-cache/
+.tailwindcss/
+*.css.map
+
+# Package manager caches (keep lock files for reproducible builds)
+.npm/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnpm-store/
+.pnp.*
+.pnp
+# Note: package-lock.json, yarn.lock, pnpm-lock.yaml should be committed
+
+# Build outputs
+*.min.js
+*.min.css
+*.bundle.js
+*.bundle.css
+.cache/
+.parcel-cache/
+.turbo/
+
+# IDE / Editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Cursor AI
+.cursor/
+.cursorrules
+.cursor-rules/
+.cursor/**/*
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
 
 # Logs
 *.log
 logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+.envrc
 
 # Docker
 .dockerignore
+docker-compose.override.yml
 
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+.jest/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.cache/
+tmp/
+temp/
+
+# Misc
+*.pem
+*.key
+*.cert
+*.crt
+.terraform/
+.terraform.lock.hcl

@@ -23,7 +23,7 @@ def get_update_log() -> list:
         try:
             with open(log_path, 'r') as f:
                 return json.load(f)
-        except:
+        except Exception:
             return []
     return []
 
@@ -159,12 +159,13 @@ def update_code(restart_services: bool = True) -> Dict:
         
         # Stash any local changes
         logger.info("Stashing local changes...")
-        stash_result = subprocess.run(
+        subprocess.run(
             ['git', 'stash'],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
+            check=False
         )
         
         # Fetch latest changes

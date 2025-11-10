@@ -1,5 +1,6 @@
 # backend/config_manager.py
-import json, os
+import json
+import os
 from typing import Dict, List
 
 CONFIG_DIR = "server_configs"
@@ -119,7 +120,7 @@ def load_banned() -> set:
         try:
             with open(BANNED_FILE) as f:
                 return set(json.load(f))
-        except:
+        except Exception:
             return set()
     return set()
 

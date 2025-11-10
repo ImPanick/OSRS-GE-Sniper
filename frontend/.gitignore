@@ -4,6 +4,7 @@
 /node_modules
 /.pnp
 .pnp.js
+.pnp.cjs
 
 # testing
 /coverage
@@ -14,6 +15,7 @@
 
 # production
 /build
+/dist
 
 # misc
 .DS_Store
@@ -23,9 +25,14 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
 # local env files
 .env*.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # vercel
 .vercel
@@ -33,4 +40,35 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+tsconfig.tsbuildinfo
 
+# Tailwind CSS
+.tailwindcss-cache/
+.tailwindcss/
+*.css.map
+tailwind.config.js.bak
+
+# Package manager caches
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.npm/
+node_modules/
+# Note: package-lock.json, yarn.lock, pnpm-lock.yaml should be committed
+
+# Build cache
+.cache/
+.parcel-cache/
+.turbo/
+.next/cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

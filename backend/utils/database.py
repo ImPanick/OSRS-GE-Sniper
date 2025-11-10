@@ -30,7 +30,8 @@ def get_history(item_id, hours=24):
               (item_id, cutoff))
     data = c.fetchall()
     conn.close()
-    return [{"time": datetime.fromtimestamp(t).strftime("%H:%M"), "low": l, "high": h} for t,l,h in data]
+    return [{"time": datetime.fromtimestamp(timestamp).strftime("%H:%M"), "low": low_price, "high": high_price} 
+            for timestamp, low_price, high_price in data]
 
 def get_price_historicals(item_id):
     """
