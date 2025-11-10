@@ -1,6 +1,25 @@
 version: '3.8'
 
 services:
+  # Cache updater - runs first to populate item cache
+  cache-updater:
+    build:
+      context: ..
+      dockerfile: docker/dockerfile.backend
+    command: python utils/cache_updater.py
+    volumes:
+      - ../backend/utils:/app/utils
+    restart: unless-stopped
+    networks:
+      - sniper-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/utils/item_cache.json') else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Backend API service
   backend:
     build:
       context: ..
@@ -15,11 +34,42 @@ services:
       - FLASK_ENV=production
       - CONFIG_PATH=/app/config.json
     depends_on:
-      - cache-updater
+      cache-updater:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - sniper-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/api/top', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
+  # Next.js frontend web service
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://backend:5000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - sniper-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # Discord bot service
   bot:
     build:
       context: ..
@@ -31,18 +81,8 @@ services:
       - BACKEND_URL=http://backend:5000
       - CONFIG_PATH=/app/config.json
     depends_on:
-      - backend
-    restart: unless-stopped
-    networks:
-      - sniper-network
-
-  cache-updater:
-    build:
-      context: ..
-      dockerfile: docker/dockerfile.backend
-    command: python utils/cache_updater.py
-    volumes:
-      - ../backend/utils:/app/utils
+      backend:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - sniper-network

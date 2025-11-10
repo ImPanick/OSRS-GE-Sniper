@@ -1,6 +1,7 @@
 # backend/app.py
 import requests, time, json, threading
-from flask import Flask, render_template_string, jsonify, request, redirect, Response
+from flask import Flask, jsonify, request, redirect, Response
+from flask_cors import CORS
 from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
 import os
@@ -14,6 +15,7 @@ from security import (
 )
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 BASE = "https://prices.runescape.wiki/api/v1/osrs"
 HEADERS = {"User-Agent": "OSRS-Sniper-Empire/3.0 (+your-discord)"}
 
@@ -432,19 +434,14 @@ def add_security_headers(response):
 
 @app.before_request
 def check_setup():
-    """Redirect to initial setup if not configured"""
-    # Allow access to setup pages and API endpoints
-    if request.path.startswith('/initial-setup') or request.path.startswith('/api/setup'):
+    """Check setup status - frontend handles redirects"""
+    # Allow access to API endpoints
+    if request.path.startswith('/api'):
         return None
     
     # Allow access to static files
     if request.path.startswith('/static'):
         return None
-    
-    # Check if setup is needed
-    if needs_setup():
-        if request.path != '/initial-setup':
-            return redirect('/initial-setup')
     
     # For admin endpoints, check LAN-only access
     if request.path.startswith('/admin') or request.path.startswith('/config'):
@@ -455,48 +452,24 @@ def check_setup():
 
 @app.route('/')
 def index():
-    if needs_setup():
-        return redirect('/initial-setup')
-    return redirect('/dashboard')
+    # Redirect to Next.js frontend
+    return redirect('http://localhost:3000')
 
-@app.route('/initial-setup')
+@app.route('/api/setup/status', methods=['GET'])
 @rate_limit(max_requests=30, window=60)
-def initial_setup():
-    """Initial setup page"""
-    if not is_local_request():
-        return jsonify({"error": "Setup can only be done from local network"}), 403
-    
-    web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "initial-setup.html")
-    try:
-        with open(web_path, 'r') as f:
-            html = f.read()
-        return render_template_string(html)
-    except IOError:
-        return jsonify({"error": "Setup page not found"}), 404
+def setup_status():
+    """Check if setup is needed"""
+    return jsonify({"needs_setup": needs_setup()})
 
-@app.route('/dashboard')
-@rate_limit(max_requests=100, window=60)
-def dashboard():
-    web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dashboard.html")
-    try:
-        with open(web_path, 'r') as f:
-            html = f.read()
-        return render_template_string(html, 
-            top_items=top_items, dump_items=dump_items, spike_items=spike_items)
-    except IOError:
-        return jsonify({"error": "Dashboard not found"}), 404
+# Initial setup now handled by Next.js frontend at /setup
 
-@app.route('/volume_tracker')
-@rate_limit(max_requests=100, window=60)
-def volume_tracker():
-    """Volume tracker page"""
-    web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "volume_tracker.html")
-    try:
-        with open(web_path, 'r') as f:
-            html = f.read()
-        return render_template_string(html)
-    except IOError:
-        return jsonify({"error": "Volume tracker not found"}), 404
+# Legacy HTML routes removed - now using Next.js frontend
+# Dashboard, volume tracker, admin, and config are now served by Next.js frontend
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for Docker"""
+    return jsonify({"status": "healthy", "service": "backend"})
 
 @app.route('/api/top')
 @rate_limit(max_requests=200, window=60)
@@ -634,15 +607,9 @@ def server_config(guild_id):
         except Exception as e:
             return jsonify({"error": "Invalid request data"}), 400
     
-    web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "config.html")
-    try:
-        with open(web_path, 'r') as f:
-            html = f.read()
-        # Escape guild_id to prevent XSS
-        safe_guild_id = escape_html(guild_id)
-        return render_template_string(html, config=config, guild_id=safe_guild_id)
-    except IOError:
-        return jsonify({"error": "Configuration page not found"}), 404
+    # Config page now handled by Next.js frontend at /config/[guildId]
+    # Return JSON for API access
+    return jsonify(config)
 
 # Setup API endpoints
 @app.route('/api/setup/save-token', methods=['POST'])
@@ -872,20 +839,41 @@ def admin_delete_server(guild_id):
     delete_config(guild_id)
     return jsonify({"status": "deleted", "guild_id": guild_id})
 
-@app.route('/admin')
-@rate_limit(max_requests=30, window=60)
-def admin_panel():
-    """Admin web interface (LAN-only)"""
-    if not is_local_request():
-        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
-    
-    web_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "admin.html")
+# Admin panel now handled by Next.js frontend at /admin
+
+# Auto-updater endpoints
+@app.route('/api/update/check', methods=['GET'])
+@require_admin_key
+def check_updates():
+    """Check if updates are available"""
     try:
-        with open(web_path, 'r') as f:
-            html = f.read()
-        return render_template_string(html)
-    except IOError:
-        return jsonify({"error": "Admin page not found"}), 404
+        from utils.auto_updater import check_for_updates, get_update_status
+        status = get_update_status()
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/update/status', methods=['GET'])
+@require_admin_key
+def update_status():
+    """Get update status and history"""
+    try:
+        from utils.auto_updater import get_update_status
+        return jsonify(get_update_status())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/update/pull', methods=['POST'])
+@require_admin_key
+def pull_updates():
+    """Pull latest updates from GitHub"""
+    try:
+        from utils.auto_updater import update_code
+        restart = request.json.get('restart_services', True) if request.json else True
+        result = update_code(restart_services=restart)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
 
 
 if __name__ == '__main__':
