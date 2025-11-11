@@ -3,13 +3,14 @@ import requests
 import time
 import json
 import threading
+from datetime import datetime
 from flask import Flask, jsonify, request, redirect
 from flask_cors import CORS
 from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
 import os
 import urllib.parse
-from utils.database import log_price, get_price_historicals, init_db
+from utils.database import log_price, get_price_historicals, init_db, get_db_connection
 import secrets
 from security import (
     sanitize_guild_id, sanitize_channel_id, sanitize_webhook_url, sanitize_token,
@@ -193,6 +194,23 @@ def load_names():
         except Exception as e:
             print(f"[ERROR] Cache updater failed: {e}")
     threading.Thread(target=updater, daemon=True).start()
+
+# Time window endpoints mapping
+TIME_WINDOWS = {
+    "5m": "5m",
+    "10m": "10m", 
+    "15m": "15m",
+    "20m": "20m",
+    "25m": "25m",
+    "30m": "30m",
+    "1h": "1h",
+    "3h": "3h",
+    "8h": "8h",
+    "12h": "12h",
+    "24h": "24h",
+    "7d": "7d",
+    "14d": "14d"
+}
 
 def fetch_all():
     global top_items, dump_items, spike_items, all_items
@@ -578,8 +596,123 @@ def api_spikes():
 @rate_limit(max_requests=100, window=60)
 def api_all_items():
     """API endpoint for volume tracker - returns all items with filtering support"""
+    time_window = request.args.get('time_window', '1h', type=str)
+    
+    # Fetch data for the requested time window (validated against allowlist)
+    time_data = {}
+    if time_window in TIME_WINDOWS:
+        try:
+            endpoint = f"{BASE}/{time_window}"
+            time_data = requests.get(endpoint, headers=HEADERS, timeout=30).json()
+        except (requests.RequestException, ValueError, KeyError) as e:
+            print(f"[WARNING] Failed to fetch {time_window} data: {e}")
+            time_data = {}
+    
     with _item_lock:
-        return jsonify(all_items)
+        # Merge time window data with existing items
+        items_with_volume = []
+        for item in all_items:
+            item_id_str = str(item['id'])
+            if item_id_str in time_data.get('data', {}):
+                vol_data = time_data['data'][item_id_str]
+                item['volume_' + time_window] = vol_data.get('volume', 0)
+                item['avgHighPrice_' + time_window] = vol_data.get('avgHighPrice')
+                item['avgLowPrice_' + time_window] = vol_data.get('avgLowPrice')
+                item['highTime_' + time_window] = vol_data.get('highTime')
+                item['lowTime_' + time_window] = vol_data.get('lowTime')
+            items_with_volume.append(item)
+        
+        return jsonify(items_with_volume)
+
+@app.route('/api/osrs_status')
+@rate_limit(max_requests=30, window=60)
+def api_osrs_status():
+    """Check OSRS Wiki API connection status"""
+    try:
+        response = requests.get(f"{BASE}/latest", headers=HEADERS, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            return jsonify({
+                "status": "connected",
+                "online": True,
+                "item_count": len(data.get("data", {})),
+                "last_check": int(datetime.now().timestamp())
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "online": False,
+                "error": f"HTTP {response.status_code}",
+                "last_check": int(datetime.now().timestamp())
+            }), 500
+    except requests.exceptions.Timeout:
+        return jsonify({
+            "status": "timeout",
+            "online": False,
+            "error": "Connection timeout",
+            "last_check": int(datetime.now().timestamp())
+        }), 500
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "online": False,
+            "error": str(e),
+            "last_check": int(datetime.now().timestamp())
+        }), 500
+
+@app.route('/api/recent_trades')
+@rate_limit(max_requests=100, window=60)
+def api_recent_trades():
+    """Get recent trades from database"""
+    limit = request.args.get('limit', 50, type=int)
+    if limit not in [25, 50, 100, 200]:
+        limit = 50
+    
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        
+        # Get recent trades
+        c.execute("""
+            SELECT item_id, timestamp, low, high, volume
+            FROM prices
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (limit,))
+        
+        rows = c.fetchall()
+        trades = []
+        for row in rows:
+            item_id = row[0]
+            timestamp = row[1]
+            low = row[2]
+            high = row[3]
+            volume = row[4]
+            
+            # Get item name from cache
+            name = item_names.get(str(item_id), f"Item {item_id}")
+            
+            trades.append({
+                "item_id": item_id,
+                "name": name,
+                "timestamp": timestamp,
+                "time": datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S"),
+                "low": low,
+                "high": high,
+                "volume": volume,
+                "avg_price": (low + high) // 2
+            })
+        
+        return jsonify({
+            "trades": trades,
+            "count": len(trades),
+            "limit": limit
+        })
+    except Exception as e:
+        print(f"[ERROR] api_recent_trades: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/nightly')
 @rate_limit(max_requests=50, window=60)

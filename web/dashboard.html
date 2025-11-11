@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSRS GE Sniper - Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h1>⚔️ OSRS GE Sniper</h1>
+  
+  <nav>
+    <a href="/dashboard" class="active">📊 Dashboard</a>
+    <a href="/volume_tracker">📈 Volume Tracker</a>
+    <a href="/admin">🔒 Admin</a>
+  </nav>
+
+  <div class="container">
+    <div class="card">
+      <h2>💰 Top Flips</h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Profit</th>
+              <th>ROI %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if top_items %}
+              {% for item in top_items %}
+              <tr>
+                <td>
+                  <a href="https://prices.runescape.wiki/osrs/item/{{ item.id }}" target="_blank" style="color: var(--accent-primary); text-decoration: none;">
+                    {{ item.name }}
+                  </a>
+                </td>
+                <td class="profit">{{ "%.1f"|format(item.profit/1e6) }}M</td>
+                <td class="profit">{{ "%.1f"|format(item.roi) }}%</td>
+              </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="3" style="text-align: center; color: var(--text-muted);">No flips available</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📉 Dumps (Buy Opportunities)</h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Drop</th>
+              <th>Quality</th>
+              <th>Volume</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if dump_items %}
+              {% for item in dump_items %}
+              <tr>
+                <td class="dump">
+                  <a href="https://prices.runescape.wiki/osrs/item/{{ item.id }}" target="_blank" style="color: var(--accent-danger); text-decoration: none;">
+                    {{ item.name }}
+                  </a>
+                </td>
+                <td class="dump">-{{ "%.1f"|format(item.drop_pct) }}%</td>
+                <td class="dump {{ 'quality-fire' if '🔥' in item.quality else 'quality-5' if '⭐⭐⭐⭐⭐' in item.quality else '' }}">
+                  {{ item.quality }}
+                </td>
+                <td>{{ item.volume|int }}</td>
+              </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="4" style="text-align: center; color: var(--text-muted);">No dumps detected</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📈 Spikes (Sell Opportunities)</h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Rise</th>
+              <th>Volume</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if spike_items %}
+              {% for item in spike_items %}
+              <tr>
+                <td class="spike">
+                  <a href="https://prices.runescape.wiki/osrs/item/{{ item.id }}" target="_blank" style="color: var(--accent-warning); text-decoration: none;">
+                    {{ item.name }}
+                  </a>
+                </td>
+                <td class="spike">+{{ "%.1f"|format(item.rise_pct) }}%</td>
+                <td>{{ item.volume|int }}</td>
+              </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="3" style="text-align: center; color: var(--text-muted);">No spikes detected</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="container" style="margin-top: 2rem;">
+    <div class="card" style="max-width: 600px; margin: 0 auto;">
+      <h2>🔄 Cache Management</h2>
+      <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+        Manually update the item cache from the OSRS Wiki API. This fetches the latest item mappings.
+      </p>
+      <button id="updateCacheBtn" onclick="updateCache()" style="width: 100%;">
+        <span id="updateCacheText">🔄 Update Item Cache</span>
+        <span id="updateCacheSpinner" class="loading hidden" style="margin-left: 0.5rem;"></span>
+      </button>
+      <div id="updateCacheStatus" style="margin-top: 1rem; min-height: 1.5rem;"></div>
+    </div>
+  </div>
+
+  <footer>
+    <p>Auto-refreshes every 10 seconds • Last updated: <span id="lastUpdate"></span></p>
+  </footer>
+
+  <script>
+    // Update last update time
+    function updateTime() {
+      const now = new Date();
+      document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+    }
+    updateTime();
+    setInterval(updateTime, 1000);
+
+    // Auto-refresh every 10 seconds
+    setInterval(() => {
+      location.reload();
+    }, 10000);
+
+    // Cache update function
+    async function updateCache() {
+      const btn = document.getElementById('updateCacheBtn');
+      const text = document.getElementById('updateCacheText');
+      const spinner = document.getElementById('updateCacheSpinner');
+      const status = document.getElementById('updateCacheStatus');
+      
+      // Disable button and show loading
+      btn.disabled = true;
+      text.textContent = 'Updating...';
+      spinner.classList.remove('hidden');
+      status.innerHTML = '';
+      
+      try {
+        const response = await fetch('/api/update_cache', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          status.innerHTML = `<p style="color: var(--accent-success); font-weight: 600;">✅ ${data.message}</p>`;
+          // Reload page after 2 seconds to show updated cache
+          setTimeout(() => {
+            location.reload();
+          }, 2000);
+        } else {
+          status.innerHTML = `<p style="color: var(--accent-danger); font-weight: 600;">❌ ${data.message}</p>`;
+          btn.disabled = false;
+          text.textContent = '🔄 Update Item Cache';
+          spinner.classList.add('hidden');
+        }
+      } catch (error) {
+        status.innerHTML = `<p style="color: var(--accent-danger); font-weight: 600;">❌ Error: ${error.message}</p>`;
+        btn.disabled = false;
+        text.textContent = '🔄 Update Item Cache';
+        spinner.classList.add('hidden');
+      }
+    }
+  </script>
+</body>
+</html>

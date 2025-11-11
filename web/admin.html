@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSRS GE Sniper - Admin Panel</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>🔒 Admin Panel</h1>
+  
+  <nav>
+    <a href="/dashboard">📊 Dashboard</a>
+    <a href="/volume_tracker">📈 Volume Tracker</a>
+    <a href="/admin" class="active">🔒 Admin</a>
+  </nav>
+
+  <div style="max-width: 1200px; margin: 0 auto; padding: 0 2rem;">
+    <div class="card">
+      <h2>🔐 Authentication</h2>
+      <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 300px;">
+          <label>Admin Key</label>
+          <input type="password" id="admin_key" placeholder="Enter admin key from config.json" autocomplete="off">
+        </div>
+        <button onclick="authenticate()">Authenticate</button>
+      </div>
+      <div id="auth_status" style="margin-top: 1rem; min-height: 1.5rem;"></div>
+    </div>
+
+    <div id="admin_panel" style="display:none;">
+      <div class="card">
+        <h2>🔄 Auto Updater</h2>
+        <div style="margin-bottom: 1.5rem;">
+          <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;">
+            <button onclick="checkForUpdates()">🔍 Check for Updates</button>
+            <button onclick="pullUpdates()" id="pullBtn" class="secondary">⬇️ Pull Updates</button>
+            <button onclick="loadUpdateStatus()">📊 Update Status</button>
+          </div>
+          <div id="update_status" style="margin-top: 1rem; min-height: 1.5rem;">
+            <p style="color: var(--text-muted); text-align: center;">Click "Check for Updates" to see if updates are available</p>
+          </div>
+        </div>
+        <div id="update_history" style="margin-top: 1.5rem;"></div>
+      </div>
+
+      <div class="card">
+        <h2>🖥️ Server Management</h2>
+        <div style="margin-bottom: 1.5rem;">
+          <button onclick="loadServers()">🔄 Refresh Server List</button>
+        </div>
+        <div id="server_list">
+          <p style="color: var(--text-muted); text-align: center; padding: 2rem;">Click refresh to load servers</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <p>Admin Panel • Use with caution</p>
+  </footer>
+
+  <script>
+    let adminKey = '';
+
+    function authenticate() {
+      adminKey = document.getElementById('admin_key').value;
+      if (!adminKey) {
+        document.getElementById('auth_status').innerHTML = '<span style="color:var(--accent-danger);">⚠️ Please enter admin key</span>';
+        return;
+      }
+      
+      loadServers();
+      document.getElementById('admin_panel').style.display = 'block';
+      document.getElementById('auth_status').innerHTML = '<span style="color:var(--accent-success);">✓ Authenticated</span>';
+    }
+
+    async function loadServers() {
+      const statusDiv = document.getElementById('auth_status');
+      const listDiv = document.getElementById('server_list');
+      
+      listDiv.innerHTML = '<div style="text-align:center;padding:2rem;"><div class="loading" style="margin:0 auto;"></div><p style="margin-top:1rem;color:var(--text-muted);">Loading servers...</p></div>';
+      
+      try {
+        const response = await fetch('/admin/servers', {
+          headers: {'X-Admin-Key': adminKey}
+        });
+        
+        if (response.status === 401) {
+          statusDiv.innerHTML = '<span style="color:var(--accent-danger);">✗ Invalid admin key</span>';
+          document.getElementById('admin_panel').style.display = 'none';
+          listDiv.innerHTML = '';
+          return;
+        }
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const servers = await response.json();
+        displayServers(servers);
+      } catch (e) {
+        console.error(e);
+        listDiv.innerHTML = '<p style="color:var(--accent-danger);text-align:center;padding:2rem;">❌ Error loading servers. Please check your connection and try again.</p>';
+      }
+    }
+
+    function displayServers(servers) {
+      const listDiv = document.getElementById('server_list');
+      
+      if (servers.length === 0) {
+        listDiv.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:2rem;">No servers configured yet.</p>';
+        return;
+      }
+
+      const tableContainer = document.createElement('div');
+      tableContainer.className = 'table-container';
+      
+      const table = document.createElement('table');
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th>Guild ID</th>
+            <th>Status</th>
+            <th>Channels</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="serversTableBody"></tbody>
+      `;
+      
+      const tbody = table.querySelector('#serversTableBody');
+      
+      servers.forEach(server => {
+        const statusClass = server.banned ? 'status-banned' : (server.enabled ? 'status-enabled' : 'status-disabled');
+        const statusText = server.banned ? 'BANNED' : (server.enabled ? 'ENABLED' : 'DISABLED');
+        const statusIcon = server.banned ? '🚫' : (server.enabled ? '✅' : '⏸️');
+        
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td><code style="color:var(--accent-primary);">${server.guild_id}</code></td>
+          <td class="${statusClass}">${statusIcon} ${statusText}</td>
+          <td>${server.channels_configured} configured</td>
+          <td>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+              ${server.banned 
+                ? `<button onclick="unbanServer('${server.guild_id}')" class="secondary">Unban</button>`
+                : `<button onclick="banServer('${server.guild_id}')" class="danger">Ban</button>`
+              }
+              <button onclick="deleteServer('${server.guild_id}')" class="danger">Delete</button>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(row);
+      });
+      
+      tableContainer.appendChild(table);
+      listDiv.innerHTML = '';
+      listDiv.appendChild(tableContainer);
+    }
+
+    async function banServer(guildId) {
+      if (!confirm(`Are you sure you want to ban server ${guildId}?`)) return;
+      
+      try {
+        const response = await fetch(`/admin/ban/${guildId}`, {
+          method: 'POST',
+          headers: {'X-Admin-Key': adminKey}
+        });
+        
+        if (response.ok) {
+          alert('✅ Server banned successfully');
+          loadServers();
+        } else {
+          const error = await response.json().catch(() => ({error: 'Unknown error'}));
+          alert(`❌ Failed to ban server: ${error.error || 'Unknown error'}`);
+        }
+      } catch (e) {
+        alert(`❌ Error: ${e.message}`);
+      }
+    }
+
+    async function unbanServer(guildId) {
+      if (!confirm(`Unban server ${guildId}?`)) return;
+      
+      try {
+        const response = await fetch(`/admin/unban/${guildId}`, {
+          method: 'POST',
+          headers: {'X-Admin-Key': adminKey}
+        });
+        
+        if (response.ok) {
+          alert('✅ Server unbanned successfully');
+          loadServers();
+        } else {
+          const error = await response.json().catch(() => ({error: 'Unknown error'}));
+          alert(`❌ Failed to unban server: ${error.error || 'Unknown error'}`);
+        }
+      } catch (e) {
+        alert(`❌ Error: ${e.message}`);
+      }
+    }
+
+    async function deleteServer(guildId) {
+      if (!confirm(`⚠️ DELETE server ${guildId}?\n\nThis action cannot be undone!`)) return;
+      
+      if (!confirm(`Are you absolutely sure? This will permanently delete all configuration for server ${guildId}.`)) return;
+      
+      try {
+        const response = await fetch(`/admin/delete/${guildId}`, {
+          method: 'DELETE',
+          headers: {'X-Admin-Key': adminKey}
+        });
+        
+        if (response.ok) {
+          alert('✅ Server deleted successfully');
+          loadServers();
+        } else {
+          const error = await response.json().catch(() => ({error: 'Unknown error'}));
+          alert(`❌ Failed to delete server: ${error.error || 'Unknown error'}`);
+        }
+      } catch (e) {
+        alert(`❌ Error: ${e.message}`);
+      }
+    }
+
+    // Allow Enter key to authenticate
+    document.getElementById('admin_key').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        authenticate();
+      }
+    });
+
+    // Auto-updater functions
+    async function checkForUpdates() {
+      const statusDiv = document.getElementById('update_status');
+      statusDiv.innerHTML = '<div class="loading" style="margin: 0 auto;"></div><p style="margin-top: 0.5rem; color: var(--text-muted);">Checking for updates...</p>';
+      
+      try {
+        const response = await fetch('/api/update/check', {
+          headers: {'X-Admin-Key': adminKey}
+        });
+        
+        if (response.status === 401) {
+          statusDiv.innerHTML = '<span style="color:var(--accent-danger);">✗ Authentication required</span>';
+          return;
+        }
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.updates_available) {
+          statusDiv.innerHTML = `
+            <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--accent-warning);">
+              <p style="color: var(--accent-warning); font-weight: 600; margin-bottom: 0.5rem;">⚠️ Updates Available!</p>
+              <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.5rem;">
+                Current: <code>${data.current_commit ? data.current_commit.substring(0, 8) : 'Unknown'}</code><br>
+                Remote: <code>${data.remote_commit ? data.remote_commit.substring(0, 8) : 'Unknown'}</code>
+              </p>
+              <button onclick="pullUpdates()" style="margin-top: 0.5rem;">⬇️ Pull Updates Now</button>
+            </div>
+          `;
+        } else {
+          statusDiv.innerHTML = `
+            <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--accent-success);">
+              <p style="color: var(--accent-success); font-weight: 600;">✅ Up to date</p>
+              <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;">
+                Current commit: <code>${data.current_commit ? data.current_commit.substring(0, 8) : 'Unknown'}</code>
+              </p>
+            </div>
+          `;
+        }
+      } catch (e) {
+        console.error(e);
+        statusDiv.innerHTML = `<span style="color:var(--accent-danger);">❌ Error checking for updates: ${e.message}</span>`;
+      }
+    }
+
+    async function pullUpdates() {
+      const statusDiv = document.getElementById('update_status');
+      const pullBtn = document.getElementById('pullBtn');
+      
+      if (!confirm('⚠️ This will pull the latest code from GitHub and restart services.\n\nContinue?')) {
+        return;
+      }
+      
+      statusDiv.innerHTML = '<div class="loading" style="margin: 0 auto;"></div><p style="margin-top: 0.5rem; color: var(--text-muted);">Pulling updates...</p>';
+      pullBtn.disabled = true;
+      pullBtn.textContent = '⏳ Updating...';
+      
+      try {
+        const response = await fetch('/api/update/pull', {
+          method: 'POST',
+          headers: {
+            'X-Admin-Key': adminKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({restart_services: true})
+        });
+        
+        if (response.status === 401) {
+          statusDiv.innerHTML = '<span style="color:var(--accent-danger);">✗ Authentication required</span>';
+          pullBtn.disabled = false;
+          pullBtn.textContent = '⬇️ Pull Updates';
+          return;
+        }
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({message: 'Unknown error'}));
+          throw new Error(error.message || `HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          if (data.updated) {
+            statusDiv.innerHTML = `
+              <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--accent-success);">
+                <p style="color: var(--accent-success); font-weight: 600; margin-bottom: 0.5rem;">✅ Update Successful!</p>
+                <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.5rem;">
+                  Updated from <code>${data.current_commit ? data.current_commit.substring(0, 8) : 'Unknown'}</code> to <code>${data.new_commit ? data.new_commit.substring(0, 8) : 'Unknown'}</code>
+                </p>
+                ${data.docker_restart ? `<p style="color: var(--text-secondary); font-size: 0.875rem;">Docker: ${data.docker_restart.message}</p>` : ''}
+                <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.5rem;">Services are restarting. The page will refresh in 5 seconds...</p>
+              </div>
+            `;
+            setTimeout(() => location.reload(), 5000);
+          } else {
+            statusDiv.innerHTML = `
+              <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--accent-warning);">
+                <p style="color: var(--accent-warning); font-weight: 600;">ℹ️ Already up to date</p>
+                <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;">
+                  Current commit: <code>${data.current_commit ? data.current_commit.substring(0, 8) : 'Unknown'}</code>
+                </p>
+              </div>
+            `;
+          }
+        } else {
+          statusDiv.innerHTML = `<span style="color:var(--accent-danger);">❌ Update failed: ${data.message || 'Unknown error'}</span>`;
+        }
+      } catch (e) {
+        console.error(e);
+        statusDiv.innerHTML = `<span style="color:var(--accent-danger);">❌ Error: ${e.message}</span>`;
+      } finally {
+        pullBtn.disabled = false;
+        pullBtn.textContent = '⬇️ Pull Updates';
+      }
+    }
+
+    async function loadUpdateStatus() {
+      const historyDiv = document.getElementById('update_history');
+      historyDiv.innerHTML = '<div class="loading" style="margin: 0 auto;"></div><p style="margin-top: 0.5rem; color: var(--text-muted);">Loading update history...</p>';
+      
+      try {
+        const response = await fetch('/api/update/status', {
+          headers: {'X-Admin-Key': adminKey}
+        });
+        
+        if (response.status === 401) {
+          historyDiv.innerHTML = '<span style="color:var(--accent-danger);">✗ Authentication required</span>';
+          return;
+        }
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.recent_updates && data.recent_updates.length > 0) {
+          let html = '<h3 style="margin-bottom: 1rem; color: var(--text-primary);">Recent Updates</h3>';
+          html += '<div class="table-container"><table><thead><tr><th>Time</th><th>Status</th><th>Message</th><th>Commit</th></tr></thead><tbody>';
+          
+          data.recent_updates.reverse().forEach(update => {
+            const statusColor = update.status === 'success' ? 'var(--accent-success)' : 
+                               update.status === 'failed' ? 'var(--accent-danger)' : 'var(--accent-warning)';
+            const time = new Date(update.timestamp).toLocaleString();
+            html += `
+              <tr>
+                <td>${time}</td>
+                <td style="color: ${statusColor}; font-weight: 600;">${update.status.toUpperCase()}</td>
+                <td>${update.message || '-'}</td>
+                <td><code>${update.commit_hash ? update.commit_hash.substring(0, 8) : '-'}</code></td>
+              </tr>
+            `;
+          });
+          
+          html += '</tbody></table></div>';
+          historyDiv.innerHTML = html;
+        } else {
+          historyDiv.innerHTML = '<p style="color: var(--text-muted); text-align: center; padding: 1rem;">No update history available</p>';
+        }
+      } catch (e) {
+        console.error(e);
+        historyDiv.innerHTML = `<span style="color:var(--accent-danger);">❌ Error loading update status: ${e.message}</span>`;
+      }
+    }
+  </script>
+</body>
+</html>
+

@@ -68,8 +68,19 @@ export const apiClient = {
     return data
   },
 
-  getAllItems: async (): Promise<Item[]> => {
-    const { data } = await api.get('/api/all_items')
+  getAllItems: async (timeWindow?: string): Promise<Item[]> => {
+    const params = timeWindow ? { time_window: timeWindow } : {}
+    const { data } = await api.get('/api/all_items', { params })
+    return data
+  },
+
+  getOSRSStatus: async () => {
+    const { data } = await api.get('/api/osrs_status')
+    return data
+  },
+
+  getRecentTrades: async (limit: number = 50) => {
+    const { data } = await api.get('/api/recent_trades', { params: { limit } })
     return data
   },
 
