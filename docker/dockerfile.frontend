@@ -38,7 +38,10 @@ COPY frontend/ .
 
 # Build Next.js
 ENV NEXT_TELEMETRY_DISABLED 1
-ENV NEXT_PUBLIC_API_URL=http://backend:5000
+# NEXT_PUBLIC_API_URL will be set at runtime via docker-compose environment variable
+# Default to localhost for build (can be overridden)
+ARG NEXT_PUBLIC_API_URL=http://localhost:5000
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 RUN echo "🔨 Building Next.js application..." && \
     npm run build && \
     echo "✓ Build completed successfully"
@@ -49,7 +52,8 @@ WORKDIR /app
 
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
-ENV NEXT_PUBLIC_API_URL=http://backend:5000
+# NEXT_PUBLIC_API_URL will be set at runtime via docker-compose environment variable
+ENV NEXT_PUBLIC_API_URL=http://localhost:5000
 
 # Install wget for health checks
 RUN apk add --no-cache wget

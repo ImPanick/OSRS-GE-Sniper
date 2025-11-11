@@ -3,6 +3,8 @@ from discord.ext import commands, tasks
 import requests
 import json
 import os
+import asyncio
+from datetime import datetime
 
 # Load config with fallback paths for Docker and local development
 CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))
@@ -31,6 +33,97 @@ intents.message_content = True
 intents.members = True  # Required for role mentions and member access
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
+async def collect_server_info(guild):
+    """Collect server information (roles, members, channels, etc.)"""
+    try:
+        guild_id = str(guild.id)
+        
+        # Collect roles
+        roles = []
+        for role in guild.roles:
+            if not role.is_bot_managed and role.name != "@everyone":
+                roles.append({
+                    "id": str(role.id),
+                    "name": role.name,
+                    "color": role.color.value if role.color.value else 0,
+                    "position": role.position,
+                    "mentionable": role.mentionable,
+                    "managed": role.managed
+                })
+        
+        # Collect text channels
+        text_channels = []
+        for channel in guild.text_channels:
+            text_channels.append({
+                "id": str(channel.id),
+                "name": channel.name,
+                "position": channel.position,
+                "nsfw": channel.nsfw
+            })
+        
+        # Collect members (with their roles)
+        members = []
+        online_count = 0
+        for member in guild.members:
+            if not member.bot:
+                member_roles = [str(role.id) for role in member.roles if not role.is_bot_managed and role.name != "@everyone"]
+                try:
+                    if hasattr(member, 'status') and member.status != discord.Status.offline:
+                        online_count += 1
+                except Exception:
+                    pass  # Status might not be available
+                members.append({
+                    "id": str(member.id),
+                    "username": member.name,
+                    "display_name": member.display_name,
+                    "roles": member_roles,
+                    "status": str(member.status) if hasattr(member, 'status') else "unknown"
+                })
+        
+        # Collect bot permissions
+        bot_member = guild.get_member(bot.user.id)
+        bot_permissions = {}
+        if bot_member:
+            perms = bot_member.guild_permissions
+            bot_permissions = {
+                "mention_everyone": perms.mention_everyone,
+                "manage_roles": perms.manage_roles,
+                "send_messages": perms.send_messages,
+                "embed_links": perms.embed_links,
+                "attach_files": perms.attach_files,
+                "read_message_history": perms.read_message_history,
+                "use_external_emojis": perms.use_external_emojis
+            }
+        
+        server_info = {
+            "guild_id": guild_id,
+            "guild_name": guild.name,
+            "guild_icon": str(guild.icon.url) if guild.icon else None,
+            "member_count": guild.member_count,
+            "online_count": online_count,
+            "roles": roles,
+            "text_channels": text_channels,
+            "members": members[:500],  # Limit to first 500 members to avoid huge payloads
+            "bot_permissions": bot_permissions,
+            "timestamp": int(datetime.now().timestamp())
+        }
+        
+        # Send to backend
+        try:
+            response = requests.post(
+                f"{CONFIG['backend_url']}/api/server_info/{guild_id}",
+                json=server_info,
+                timeout=10
+            )
+            if response.status_code == 200:
+                print(f"[BOT] ✓ Updated server info: {guild.name} ({guild_id})")
+            else:
+                print(f"[BOT] ⚠ Failed to update server info: {guild.name} ({guild_id}) - HTTP {response.status_code}")
+        except Exception as e:
+            print(f"[BOT] ⚠ Error updating server info {guild.name} ({guild_id}): {e}")
+    except Exception as e:
+        print(f"[BOT] ⚠ Error collecting server info for {guild.name}: {e}")
+
 @bot.event
 async def on_ready():
     print(f"{bot.user} ONLINE")
@@ -50,8 +143,13 @@ async def on_ready():
                 print(f"[BOT] ⚠ Failed to register server: {guild.name} ({guild_id}) - HTTP {response.status_code}")
         except Exception as e:
             print(f"[BOT] ⚠ Error registering server {guild.name} ({guild_id}): {e}")
+        
+        # Collect and send server info
+        await collect_server_info(guild)
     
     poll_alerts.start()
+    update_server_info.start()
+    process_role_assignments.start()
 
 @bot.event
 async def on_guild_join(guild):
@@ -67,6 +165,58 @@ async def on_guild_join(guild):
             print(f"[BOT] ⚠ Failed to auto-register server: {guild.name} ({guild_id}) - HTTP {response.status_code}")
     except Exception as e:
         print(f"[BOT] ⚠ Error auto-registering server {guild.name} ({guild_id}): {e}")
+    
+    # Collect and send server info
+    await collect_server_info(guild)
+
+@tasks.loop(seconds=300)  # Update server info every 5 minutes
+async def update_server_info():
+    """Periodically update server information"""
+    try:
+        for guild in bot.guilds:
+            await collect_server_info(guild)
+            # Small delay between servers to avoid rate limits
+            await asyncio.sleep(1)
+    except Exception as e:
+        print(f"[ERROR] update_server_info: {e}")
+
+@tasks.loop(seconds=10)  # Check for role assignments every 10 seconds
+async def process_role_assignments():
+    """Process pending role assignments from admin panel"""
+    try:
+        for guild in bot.guilds:
+            guild_id = str(guild.id)
+            assignment_path = os.path.join("server_configs", f"{guild_id}_assignments.json")
+            
+            # Try to find assignment file (it's in backend, but we'll check via API)
+            try:
+                response = requests.get(f"{CONFIG['backend_url']}/api/server_info/{guild_id}/assignments", timeout=2)
+                if response.status_code == 200:
+                    assignments = response.json()
+                    for assignment in assignments:
+                        user_id = int(assignment.get('user_id'))
+                        role_id = int(assignment.get('role_id'))
+                        action = assignment.get('action', 'add')
+                        
+                        try:
+                            member = guild.get_member(user_id)
+                            role = guild.get_role(role_id)
+                            
+                            if member and role:
+                                if action == 'add':
+                                    await member.add_roles(role, reason="Assigned via admin panel")
+                                    print(f"[BOT] ✓ Assigned role {role.name} to {member.name} in {guild.name}")
+                                elif action == 'remove':
+                                    await member.remove_roles(role, reason="Removed via admin panel")
+                                    print(f"[BOT] ✓ Removed role {role.name} from {member.name} in {guild.name}")
+                        except discord.Forbidden:
+                            print(f"[BOT] ⚠ No permission to manage roles in {guild.name}")
+                        except Exception as e:
+                            print(f"[BOT] ⚠ Error processing role assignment: {e}")
+            except Exception:
+                pass  # Assignment file doesn't exist or API call failed
+    except Exception as e:
+        print(f"[ERROR] process_role_assignments: {e}")
 
 @tasks.loop(seconds=20)
 async def poll_alerts():

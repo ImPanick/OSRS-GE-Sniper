@@ -5,6 +5,7 @@ import { Card } from '@/components/Card'
 import { Bot, Webhook, Server, CheckCircle, Loader } from 'lucide-react'
 import axios from 'axios'
 
+// Use localhost since browser and backend are on the same machine
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
 
 export default function SetupPage() {

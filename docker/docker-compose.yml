@@ -32,6 +32,8 @@ services:
       - ../backend/server_configs:/app/server_configs
       - ../backend/utils:/app/utils
       - ../config.json:/app/config.json:ro
+      - ../:/repo  # Mount entire repo for git operations (needs write access for git pull)
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Mount Docker socket for container management
     environment:
       - FLASK_ENV=production
       - CONFIG_PATH=/app/config.json
@@ -60,7 +62,7 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=http://backend:5000
+      - NEXT_PUBLIC_API_URL=http://localhost:5000
     depends_on:
       backend:
         condition: service_healthy

@@ -241,27 +241,42 @@ def fetch_with_fallback(url, headers, fallback_url=None, fallback_headers=None, 
 
 def convert_1h_data_to_dict(h1_data):
     """
-    Convert 1h price data from array format to dict format for easier access.
-    OSRS API returns: {"data": [{"id": 2, "avgHighPrice": 2550, ...}]}
+    Convert 1h price data to dict format for easier access.
+    OSRS API /1h endpoint returns: {"data": {"2": {"avgHighPrice": 2550, "highPriceVolume": 100, ...}}}
     We need: {"2": {"avgHighPrice": 2550, "volume": 500, ...}}
     """
     if isinstance(h1_data, dict) and "data" in h1_data:
-        # Convert array to dict keyed by item ID
-        result = {}
-        for item in h1_data["data"]:
-            item_id = str(item.get("id"))
-            result[item_id] = {
-                "avgHighPrice": item.get("avgHighPrice"),
-                "avgLowPrice": item.get("avgLowPrice"),
-                "volume": item.get("volume", 0),
-                "timestamp": item.get("timestamp")
-            }
-        return result
+        data = h1_data["data"]
+        # Check if data is already a dict (new format) or array (old format)
+        if isinstance(data, dict):
+            # Already in dict format - just convert to our expected structure
+            result = {}
+            for item_id, item_data in data.items():
+                # Calculate volume from highPriceVolume and lowPriceVolume
+                volume = (item_data.get("highPriceVolume", 0) or 0) + (item_data.get("lowPriceVolume", 0) or 0)
+                result[str(item_id)] = {
+                    "avgHighPrice": item_data.get("avgHighPrice"),
+                    "avgLowPrice": item_data.get("avgLowPrice"),
+                    "volume": volume,
+                    "timestamp": item_data.get("timestamp")
+                }
+            return result
+        elif isinstance(data, list):
+            # Array format (legacy) - convert to dict
+            result = {}
+            for item in data:
+                item_id = str(item.get("id"))
+                result[item_id] = {
+                    "avgHighPrice": item.get("avgHighPrice"),
+                    "avgLowPrice": item.get("avgLowPrice"),
+                    "volume": item.get("volume", 0),
+                    "timestamp": item.get("timestamp")
+                }
+            return result
     elif isinstance(h1_data, dict):
         # Already in dict format (fallback API might return different format)
         return h1_data
-    else:
-        return {}
+    return {}
 
 def fetch_all():
     global top_items, dump_items, spike_items, all_items
@@ -277,12 +292,12 @@ def fetch_all():
         if latest_source == 'fallback':
             print("[INFO] Using fallback API for latest prices")
         
-        # Fetch 1-hour prices with fallback - use correct endpoint /prices/1h
+        # Fetch 1-hour prices with fallback - use correct endpoint /1h
         h1_raw, h1_source = fetch_with_fallback(
-            f"{BASE}/prices/1h",
+            f"{BASE}/1h",
             HEADERS,
-            f"{FALLBACK_BASE}/1h" if FALLBACK_BASE else None,
-            FALLBACK_HEADERS if FALLBACK_BASE else None,
+            None,  # Fallback API doesn't support 1h endpoint
+            None,
             timeout=30
         )
         if h1_source == 'fallback':
@@ -549,9 +564,9 @@ def poll():
                 time.sleep(60)
                 consecutive_errors = 0
             else:
-                time.sleep(8)
+                time.sleep(2)  # Fast polling rate - 2 seconds
         else:
-            time.sleep(8)
+            time.sleep(2)  # Fast polling rate - 2 seconds
 
 def needs_setup():
     """Check if initial setup is needed"""
@@ -685,10 +700,10 @@ def api_all_items():
     time_data = {}
     if time_window in TIME_WINDOWS:
         try:
-            # Use correct endpoint path for 1h: /prices/1h instead of /1h
+            # Use correct endpoint path for 1h: /1h
             if time_window == "1h":
-                endpoint = f"{BASE}/prices/1h"
-                fallback_endpoint = f"{FALLBACK_BASE}/1h" if FALLBACK_BASE else None
+                endpoint = f"{BASE}/1h"
+                fallback_endpoint = None  # Fallback API doesn't support 1h endpoint
             else:
                 endpoint = f"{BASE}/{time_window}"
                 fallback_endpoint = f"{FALLBACK_BASE}/{time_window}" if FALLBACK_BASE else None
@@ -843,12 +858,12 @@ def api_nightly():
             timeout=30
         )
         
-        # Fetch 1-hour prices with fallback - use correct endpoint /prices/1h
+        # Fetch 1-hour prices - use correct endpoint /1h
         h1_raw, _ = fetch_with_fallback(
-            f"{BASE}/prices/1h",
+            f"{BASE}/1h",
             HEADERS,
-            f"{FALLBACK_BASE}/1h" if FALLBACK_BASE else None,
-            FALLBACK_HEADERS if FALLBACK_BASE else None,
+            None,  # Fallback API doesn't support 1h endpoint
+            None,
             timeout=30
         )
         h1 = convert_1h_data_to_dict(h1_raw)
@@ -1053,6 +1068,151 @@ def api_server_banned(guild_id):
         return jsonify({"banned": False})  # Return False for invalid IDs
     
     return jsonify({"banned": is_banned(guild_id)})
+
+@app.route('/api/server_info/<guild_id>', methods=['POST'])
+@rate_limit(max_requests=50, window=60)
+def api_server_info_update(guild_id):
+    """API endpoint for bot to update server information (roles, members, channels, etc.)"""
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        # Store server info in a separate file
+        server_info_path = os.path.join("server_configs", f"{guild_id}_info.json")
+        # Ensure path is safe
+        if not os.path.abspath(server_info_path).startswith(os.path.abspath("server_configs")):
+            return jsonify({"error": "Invalid path"}), 400
+        
+        # Save server info
+        with open(server_info_path, 'w') as f:
+            json.dump(data, f, indent=2)
+        
+        return jsonify({"status": "updated"})
+    except Exception as e:
+        print(f"[ERROR] api_server_info_update: {e}")
+        return jsonify({"error": "Failed to update server info"}), 500
+
+@app.route('/api/server_info/<guild_id>', methods=['GET'])
+@rate_limit(max_requests=100, window=60)
+def api_server_info_get(guild_id):
+    """API endpoint to get server information for admin panel"""
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    # LAN-only access for admin panel
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    try:
+        server_info_path = os.path.join("server_configs", f"{guild_id}_info.json")
+        # Ensure path is safe
+        if not os.path.abspath(server_info_path).startswith(os.path.abspath("server_configs")):
+            return jsonify({"error": "Invalid path"}), 400
+        
+        if os.path.exists(server_info_path):
+            with open(server_info_path, 'r') as f:
+                return jsonify(json.load(f))
+        else:
+            return jsonify({"error": "Server info not available"}), 404
+    except Exception as e:
+        print(f"[ERROR] api_server_info_get: {e}")
+        return jsonify({"error": "Failed to get server info"}), 500
+
+@app.route('/api/server_info/<guild_id>/assign_role', methods=['POST'])
+@rate_limit(max_requests=30, window=60)
+def api_assign_role(guild_id):
+    """API endpoint to assign a role to a member (via bot)"""
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    # LAN-only access for admin panel
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        user_id = data.get('user_id')
+        role_id = data.get('role_id')
+        action = data.get('action', 'add')  # 'add' or 'remove'
+        
+        if not user_id or not role_id:
+            return jsonify({"error": "Missing user_id or role_id"}), 400
+        
+        # This will be handled by the bot - we'll send a request to the bot
+        # For now, we'll store the assignment request and the bot will poll for it
+        assignment_path = os.path.join("server_configs", f"{guild_id}_assignments.json")
+        if not os.path.abspath(assignment_path).startswith(os.path.abspath("server_configs")):
+            return jsonify({"error": "Invalid path"}), 400
+        
+        assignments = []
+        if os.path.exists(assignment_path):
+            with open(assignment_path, 'r') as f:
+                assignments = json.load(f)
+        
+        # Add assignment request
+        assignment = {
+            "user_id": str(user_id),
+            "role_id": str(role_id),
+            "action": action,
+            "timestamp": int(datetime.now().timestamp())
+        }
+        assignments.append(assignment)
+        
+        # Keep only last 100 assignments
+        assignments = assignments[-100:]
+        
+        with open(assignment_path, 'w') as f:
+            json.dump(assignments, f, indent=2)
+        
+        return jsonify({"status": "queued"})
+    except Exception as e:
+        print(f"[ERROR] api_assign_role: {e}")
+        return jsonify({"error": "Failed to queue role assignment"}), 500
+
+@app.route('/api/server_info/<guild_id>/assignments', methods=['GET'])
+@rate_limit(max_requests=100, window=60)
+def api_get_assignments(guild_id):
+    """API endpoint for bot to get pending role assignments"""
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    try:
+        assignment_path = os.path.join("server_configs", f"{guild_id}_assignments.json")
+        if not os.path.abspath(assignment_path).startswith(os.path.abspath("server_configs")):
+            return jsonify({"error": "Invalid path"}), 400
+        
+        if os.path.exists(assignment_path):
+            with open(assignment_path, 'r') as f:
+                assignments = json.load(f)
+            # Clear processed assignments (older than 1 minute)
+            current_time = int(datetime.now().timestamp())
+            assignments = [a for a in assignments if current_time - a.get('timestamp', 0) < 60]
+            
+            # Save back (remove processed ones)
+            with open(assignment_path, 'w') as f:
+                json.dump(assignments, f, indent=2)
+            
+            return jsonify(assignments)
+        else:
+            return jsonify([])
+    except Exception as e:
+        print(f"[ERROR] api_get_assignments: {e}")
+        return jsonify({"error": "Failed to get assignments"}), 500
 @app.route('/config/<guild_id>', methods=['GET', 'POST'])
 @rate_limit(max_requests=30, window=60)
 def server_config(guild_id):
@@ -1157,7 +1317,7 @@ def setup_save_token():
             CONFIG = json.load(f)
         
         return jsonify({"status": "saved"})
-    except Exception as e:
+    except Exception:
         return jsonify({"error": "Invalid request"}), 400
 
 @app.route('/api/setup/test-bot', methods=['GET'])

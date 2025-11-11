@@ -3,9 +3,11 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card } from '@/components/Card'
-import { Settings, Save, RotateCcw } from 'lucide-react'
+import { Settings, Save, RotateCcw, Users, Hash, Shield, CheckCircle, XCircle } from 'lucide-react'
 import axios from 'axios'
+import { apiClient } from '@/lib/api'
 
+// Use localhost since browser and backend are on the same machine
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
 
 export default function ConfigPage() {
@@ -13,9 +15,11 @@ export default function ConfigPage() {
   const router = useRouter()
   const guildId = params.guildId as string
   const [config, setConfig] = useState<any>(null)
+  const [serverInfo, setServerInfo] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<string>('')
+  const [selectedMember, setSelectedMember] = useState<string | null>(null)
 
   const fetchConfig = async () => {
     try {
@@ -33,8 +37,34 @@ export default function ConfigPage() {
     }
   }
 
+  const fetchServerInfo = async () => {
+    try {
+      const info = await apiClient.getServerInfo(guildId)
+      setServerInfo(info)
+    } catch (error: any) {
+      if (error.response?.status !== 404) {
+        console.error('Failed to fetch server info:', error)
+      }
+    }
+  }
+
+  const handleAssignRole = async (userId: string, roleId: string, action: 'add' | 'remove' = 'add') => {
+    try {
+      await apiClient.assignRole(guildId, userId, roleId, action)
+      // Refresh server info to see updated roles
+      setTimeout(() => fetchServerInfo(), 1000)
+    } catch (error) {
+      console.error('Failed to assign role:', error)
+      alert('Failed to assign role. Make sure the bot has "Manage Roles" permission.')
+    }
+  }
+
   useEffect(() => {
     fetchConfig()
+    fetchServerInfo()
+    // Refresh server info every 30 seconds
+    const interval = setInterval(fetchServerInfo, 30000)
+    return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guildId])
 
@@ -133,7 +163,7 @@ export default function ConfigPage() {
               id="cheap_flips"
               defaultValue={channels.cheap_flips || ''}
               className="w-full px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-              placeholder="#cheap-flips"
+              placeholder="Channel ID or name"
             />
           </div>
 
@@ -246,9 +276,188 @@ export default function ConfigPage() {
         )}
       </Card>
 
-      <Card title="Role Pings" icon={<Settings className="w-5 h-5" />}>
+      {serverInfo && (
+        <Card title="Server Information" icon={<Users className="w-5 h-5" />}>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="p-4 bg-dark-800 rounded-lg border border-dark-700">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="w-4 h-4 text-primary-400" />
+                <span className="text-sm font-medium text-dark-300">Total Members</span>
+              </div>
+              <p className="text-2xl font-bold text-white">{serverInfo.member_count || 0}</p>
+            </div>
+            <div className="p-4 bg-dark-800 rounded-lg border border-dark-700">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle className="w-4 h-4 text-green-400" />
+                <span className="text-sm font-medium text-dark-300">Online Users</span>
+              </div>
+              <p className="text-2xl font-bold text-white">{serverInfo.online_count || 0}</p>
+            </div>
+            <div className="p-4 bg-dark-800 rounded-lg border border-dark-700">
+              <div className="flex items-center gap-2 mb-2">
+                <Shield className="w-4 h-4 text-primary-400" />
+                <span className="text-sm font-medium text-dark-300">Roles</span>
+              </div>
+              <p className="text-2xl font-bold text-white">{serverInfo.roles?.length || 0}</p>
+            </div>
+          </div>
+
+          {serverInfo.bot_permissions && (
+            <div className="mb-6 p-4 bg-dark-800 rounded-lg border border-dark-700">
+              <h3 className="text-sm font-semibold text-dark-300 mb-3">Bot Permissions</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="flex items-center gap-2">
+                  {serverInfo.bot_permissions.manage_roles ? (
+                    <CheckCircle className="w-4 h-4 text-green-400" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-red-400" />
+                  )}
+                  <span className="text-xs text-dark-300">Manage Roles</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {serverInfo.bot_permissions.send_messages ? (
+                    <CheckCircle className="w-4 h-4 text-green-400" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-red-400" />
+                  )}
+                  <span className="text-xs text-dark-300">Send Messages</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {serverInfo.bot_permissions.embed_links ? (
+                    <CheckCircle className="w-4 h-4 text-green-400" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-red-400" />
+                  )}
+                  <span className="text-xs text-dark-300">Embed Links</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {serverInfo.bot_permissions.mention_everyone ? (
+                    <CheckCircle className="w-4 h-4 text-green-400" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-red-400" />
+                  )}
+                  <span className="text-xs text-dark-300">Mention Roles</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-sm font-semibold text-dark-300 mb-3 flex items-center gap-2">
+                <Hash className="w-4 h-4" />
+                Text Channels ({serverInfo.text_channels?.length || 0})
+              </h3>
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {serverInfo.text_channels?.map((channel: any) => (
+                  <div
+                    key={channel.id}
+                    className="p-2 bg-dark-800 rounded border border-dark-700 hover:border-primary-500 cursor-pointer transition-colors"
+                    onClick={() => {
+                      navigator.clipboard.writeText(channel.id)
+                      alert(`Channel ID ${channel.id} copied to clipboard!`)
+                    }}
+                    title="Click to copy channel ID"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white">#{channel.name}</span>
+                      <code className="text-xs text-primary-400">{channel.id}</code>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-dark-300 mb-3 flex items-center gap-2">
+                <Shield className="w-4 h-4" />
+                Roles ({serverInfo.roles?.length || 0})
+              </h3>
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {serverInfo.roles?.map((role: any) => (
+                  <div
+                    key={role.id}
+                    className="p-2 bg-dark-800 rounded border border-dark-700 hover:border-primary-500 cursor-pointer transition-colors"
+                    onClick={() => {
+                      navigator.clipboard.writeText(role.id)
+                      alert(`Role ID ${role.id} copied to clipboard!`)
+                    }}
+                    title="Click to copy role ID"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white" style={{ color: role.color ? `#${role.color.toString(16).padStart(6, '0')}` : undefined }}>
+                        {role.name}
+                      </span>
+                      <code className="text-xs text-primary-400">{role.id}</code>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <Card title="Role Assignment" icon={<Users className="w-5 h-5" />}>
         <p className="text-dark-400 mb-6">
-          Configure roles to ping based on risk level and quality. Enter role IDs or role names (without @).
+          Assign roles to members for easy notification management. Select a member and click on roles to assign/remove.
+        </p>
+
+        {serverInfo && serverInfo.members && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">
+                Select Member
+              </label>
+              <select
+                value={selectedMember || ''}
+                onChange={(e) => setSelectedMember(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="">-- Select a member --</option>
+                {serverInfo.members.map((member: any) => (
+                  <option key={member.id} value={member.id}>
+                    {member.display_name || member.username} ({member.username})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedMember && (
+              <div>
+                <label className="block text-sm font-medium text-dark-300 mb-2">
+                  Available Roles
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
+                  {serverInfo.roles?.map((role: any) => {
+                    const member = serverInfo.members.find((m: any) => m.id === selectedMember)
+                    const hasRole = member?.roles?.includes(role.id)
+                    return (
+                      <button
+                        key={role.id}
+                        onClick={() => handleAssignRole(selectedMember, role.id, hasRole ? 'remove' : 'add')}
+                        className={`p-2 rounded border text-sm transition-colors ${
+                          hasRole
+                            ? 'bg-primary-600/20 border-primary-500 text-primary-300'
+                            : 'bg-dark-800 border-dark-700 text-white hover:border-primary-500'
+                        }`}
+                        style={{ color: hasRole && role.color ? `#${role.color.toString(16).padStart(6, '0')}` : undefined }}
+                      >
+                        {role.name}
+                        {hasRole && <span className="ml-2 text-xs">✓</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
+      <Card title="Channel Routing" icon={<Settings className="w-5 h-5" />}>
+        <p className="text-dark-400 mb-6">
+          Configure which Discord channels receive different types of notifications. You can click on channels above to auto-fill IDs.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

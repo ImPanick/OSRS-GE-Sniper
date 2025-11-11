@@ -1,5 +1,6 @@
 import axios from 'axios'
 
+// Use localhost since browser and backend are on the same machine
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
 
 const api = axios.create({
@@ -117,6 +118,21 @@ export const apiClient = {
 
   deleteServer: async (guildId: string) => {
     const { data } = await api.delete(`/admin/delete/${guildId}`)
+    return data
+  },
+
+  // Server info endpoints
+  getServerInfo: async (guildId: string) => {
+    const { data } = await api.get(`/api/server_info/${guildId}`)
+    return data
+  },
+
+  assignRole: async (guildId: string, userId: string, roleId: string, action: 'add' | 'remove' = 'add') => {
+    const { data } = await api.post(`/api/server_info/${guildId}/assign_role`, {
+      user_id: userId,
+      role_id: roleId,
+      action: action
+    })
     return data
   },
 }
