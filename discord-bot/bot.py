@@ -243,21 +243,23 @@ async def poll_alerts():
                 sell_price = item.get('sell', buy_price)
                 insta_buy = item.get('insta_buy', buy_price)
                 insta_sell = item.get('insta_sell', sell_price)
+                volume = item.get('volume', 0)
+                limit = item.get('limit', 0)
+                drop_pct = item.get('drop_pct', 0)
+                quality = item.get('quality', '')
+                quality_label = item.get('quality_label', '')
+                realistic_profit = item.get('realistic_profit', 0)
+                cost_per_limit = item.get('cost_per_limit', 0)
+                profit_per_item = sell_price - buy_price
+                profit_pct = (profit_per_item / buy_price * 100) if buy_price > 0 else 0
                 
-                # Build price description
-                price_desc = f"Buy: {buy_price:,} GP → Sell: {sell_price:,} GP"
-                if insta_buy != buy_price or insta_sell != sell_price:
-                    price_desc += f"\n⚡ Insta Buy: {insta_buy:,} GP | Insta Sell: {insta_sell:,} GP"
-                
-                # Add risk metrics
+                # Risk metrics
                 risk_score = item.get('risk_score', 0)
                 risk_level = item.get('risk_level', 'UNKNOWN')
                 profitability_confidence = item.get('profitability_confidence', 0)
+                liquidity_score = item.get('liquidity_score', 0)
                 
-                risk_info = f"\n⚠️ **Risk:** {risk_level} ({risk_score:.1f}/100) | **Confidence:** {profitability_confidence:.1f}%"
-                
-                # Build price historicals
-                historicals_text = ""
+                # Price historicals
                 avg_7d = item.get('avg_7d')
                 avg_24h = item.get('avg_24h')
                 avg_12h = item.get('avg_12h')
@@ -266,39 +268,86 @@ async def poll_alerts():
                 prev_price = item.get('prev_price')
                 prev_timestamp = item.get('prev_timestamp')
                 
-                if avg_7d or avg_24h or avg_12h or avg_6h or avg_1h or prev_price:
-                    historicals_text = "\n\n📊 **Price Historicals:**\n"
-                    if avg_7d:
-                        historicals_text += f"7d: {avg_7d:,} GP | "
-                    if avg_24h:
-                        historicals_text += f"24h: {avg_24h:,} GP | "
-                    if avg_12h:
-                        historicals_text += f"12h: {avg_12h:,} GP | "
-                    if avg_6h:
-                        historicals_text += f"6h: {avg_6h:,} GP | "
-                    if avg_1h:
-                        historicals_text += f"1h: {avg_1h:,} GP"
-                    if prev_price:
-                        from datetime import datetime
-                        if prev_timestamp:
-                            hours_ago = (datetime.now().timestamp() - prev_timestamp) / 3600
-                            historicals_text += f"\nPrev: {prev_price:,} GP ({hours_ago:.1f} hours ago)"
+                # Build title with quality indicator
+                title = f"✔ Dump Detected: {item_name}"
+                if quality:
+                    title = f"{quality} {title}"
                 
+                # Build description with all details
+                description_parts = []
+                
+                # Quality label
+                if quality_label:
+                    description_parts.append(f"**{quality_label}**")
+                
+                # Volume and limit info
+                if volume and limit:
+                    description_parts.append(f"**IB/IS Volume:** {volume:,}/{volume:,} | **Limit:** {limit:,}")
+                
+                # Realistic profit
+                if realistic_profit:
+                    description_parts.append(f"💰 **Realistic Profit:** {realistic_profit:,} gp Sell @ {sell_price:,} gp")
+                
+                # Price historicals section
+                historicals_list = []
+                if avg_7d:
+                    historicals_list.append(f"**7d:** {avg_7d:,} gp")
+                if avg_24h:
+                    historicals_list.append(f"**24h:** {avg_24h:,} gp")
+                if avg_12h:
+                    historicals_list.append(f"**12h:** {avg_12h:,} gp")
+                if avg_6h:
+                    historicals_list.append(f"**6h:** {avg_6h:,} gp")
+                if avg_1h:
+                    historicals_list.append(f"**1h:** {avg_1h:,} gp")
+                if prev_price and prev_timestamp:
+                    hours_ago = (datetime.now().timestamp() - prev_timestamp) / 3600
+                    historicals_list.append(f"**Prev:** {prev_price:,} gp ({hours_ago:.1f} hours ago)")
+                
+                if historicals_list:
+                    description_parts.append("📉 **Price History:**\n" + "\n".join(historicals_list))
+                
+                # Instant buy/sell prices
+                insta_info = []
+                if insta_buy and insta_buy != buy_price:
+                    insta_info.append(f"**Insta Buy:** {insta_buy:,}")
+                if insta_sell and insta_sell != sell_price:
+                    insta_info.append(f"**Insta Sell:** {insta_sell:,}")
+                
+                if insta_info:
+                    description_parts.append("⚡ " + " | ".join(insta_info))
+                
+                # Cost and profit per item
+                if cost_per_limit:
+                    description_parts.append(f"💰 **Cost per limit:** {cost_per_limit:,} gp")
+                
+                if profit_per_item > 0:
+                    description_parts.append(f"✔ **Profit per item:** +{profit_per_item:,} gp ({profit_pct:.2f}%)")
+                
+                # Risk and confidence
+                description_parts.append(f"⚠️ **Risk:** {risk_level} ({risk_score:.1f}/100) | **Confidence:** {profitability_confidence:.1f}% | **Liquidity:** {liquidity_score:.1f}%")
+                
+                # Create embed
                 embed = discord.Embed(
-                    title=f"🔥 DUMP: {item_name}",
-                    description=f"**{item.get('drop_pct', 0):.1f}% DROP**\n"
-                              f"{price_desc}\n"
-                              f"Vol: {item.get('volume', 0):,}\n"
-                              f"{item.get('quality_label', '')}"
-                              f"{risk_info}"
-                              f"{historicals_text}",
+                    title=title,
+                    description="\n".join(description_parts),
                     color=0x8B0000,
                     url=get_item_wiki_url(item_id)
                 )
                 
-                # Add thumbnail if available
+                # Add thumbnail (top-right in Discord)
                 if thumbnail_url:
                     embed.set_thumbnail(url=thumbnail_url)
+                
+                # Add footer with metadata
+                footer_text = f"ID: {item_id}"
+                if item.get('version'):
+                    footer_text += f" | v{item.get('version')}"
+                footer_text += " | Tax: 1%"
+                embed.set_footer(text=footer_text)
+                
+                # Add timestamp
+                embed.timestamp = datetime.now()
                 
                 return embed
             await broadcast_to_all_servers(bot, dumps, "dump", dump_embed)
@@ -316,21 +365,19 @@ async def poll_alerts():
                 sell_price = item.get('sell', 0)
                 insta_buy = item.get('insta_buy', buy_price)
                 insta_sell = item.get('insta_sell', sell_price)
+                volume = item.get('volume', 0)
+                limit = item.get('limit', 0)
+                rise_pct = item.get('rise_pct', 0)
+                profit_per_item = sell_price - buy_price
+                profit_pct = (profit_per_item / buy_price * 100) if buy_price > 0 else 0
                 
-                # Build price description
-                price_desc = f"Buy: {buy_price:,} GP → Sell: {sell_price:,} GP"
-                if insta_buy != buy_price or insta_sell != sell_price:
-                    price_desc += f"\n⚡ Insta Buy: {insta_buy:,} GP | Insta Sell: {insta_sell:,} GP"
-                
-                # Add risk metrics
+                # Risk metrics
                 risk_score = item.get('risk_score', 0)
                 risk_level = item.get('risk_level', 'UNKNOWN')
                 profitability_confidence = item.get('profitability_confidence', 0)
+                liquidity_score = item.get('liquidity_score', 0)
                 
-                risk_info = f"\n⚠️ **Risk:** {risk_level} ({risk_score:.1f}/100) | **Confidence:** {profitability_confidence:.1f}%"
-                
-                # Build price historicals
-                historicals_text = ""
+                # Price historicals
                 avg_7d = item.get('avg_7d')
                 avg_24h = item.get('avg_24h')
                 avg_12h = item.get('avg_12h')
@@ -339,38 +386,77 @@ async def poll_alerts():
                 prev_price = item.get('prev_price')
                 prev_timestamp = item.get('prev_timestamp')
                 
-                if avg_7d or avg_24h or avg_12h or avg_6h or avg_1h or prev_price:
-                    historicals_text = "\n\n📊 **Price Historicals:**\n"
-                    if avg_7d:
-                        historicals_text += f"7d: {avg_7d:,} GP | "
-                    if avg_24h:
-                        historicals_text += f"24h: {avg_24h:,} GP | "
-                    if avg_12h:
-                        historicals_text += f"12h: {avg_12h:,} GP | "
-                    if avg_6h:
-                        historicals_text += f"6h: {avg_6h:,} GP | "
-                    if avg_1h:
-                        historicals_text += f"1h: {avg_1h:,} GP"
-                    if prev_price:
-                        from datetime import datetime
-                        if prev_timestamp:
-                            hours_ago = (datetime.now().timestamp() - prev_timestamp) / 3600
-                            historicals_text += f"\nPrev: {prev_price:,} GP ({hours_ago:.1f} hours ago)"
+                # Build title
+                title = f"📈 SPIKE DETECTED — SELL NOW: {item_name}"
                 
+                # Build description with all details
+                description_parts = []
+                
+                # Price change
+                description_parts.append(f"**+{rise_pct:.1f}% RISE**")
+                description_parts.append(f"**Price:** {buy_price:,} GP → {sell_price:,} GP")
+                
+                # Volume and limit info
+                if volume and limit:
+                    description_parts.append(f"**IB/IS Volume:** {volume:,}/{volume:,} | **Limit:** {limit:,}")
+                
+                # Instant buy/sell prices
+                insta_info = []
+                if insta_buy and insta_buy != buy_price:
+                    insta_info.append(f"**Insta Buy:** {insta_buy:,} GP")
+                if insta_sell and insta_sell != sell_price:
+                    insta_info.append(f"**Insta Sell:** {insta_sell:,} GP")
+                
+                if insta_info:
+                    description_parts.append("⚡ " + " | ".join(insta_info))
+                
+                # Price historicals section
+                historicals_list = []
+                if avg_7d:
+                    historicals_list.append(f"**7d:** {avg_7d:,} GP")
+                if avg_24h:
+                    historicals_list.append(f"**24h:** {avg_24h:,} GP")
+                if avg_12h:
+                    historicals_list.append(f"**12h:** {avg_12h:,} GP")
+                if avg_6h:
+                    historicals_list.append(f"**6h:** {avg_6h:,} GP")
+                if avg_1h:
+                    historicals_list.append(f"**1h:** {avg_1h:,} GP")
+                if prev_price and prev_timestamp:
+                    hours_ago = (datetime.now().timestamp() - prev_timestamp) / 3600
+                    historicals_list.append(f"**Prev:** {prev_price:,} GP ({hours_ago:.1f} hours ago)")
+                
+                if historicals_list:
+                    description_parts.append("📊 **Price History:**\n" + "\n".join(historicals_list))
+                
+                # Profit per item
+                if profit_per_item > 0:
+                    description_parts.append(f"✔ **Profit per item:** +{profit_per_item:,} GP ({profit_pct:.2f}%)")
+                
+                # Risk and confidence
+                description_parts.append(f"⚠️ **Risk:** {risk_level} ({risk_score:.1f}/100) | **Confidence:** {profitability_confidence:.1f}% | **Liquidity:** {liquidity_score:.1f}%")
+                
+                # Create embed
                 embed = discord.Embed(
-                    title=f"📈 SPIKE: {item_name}",
-                    description=f"**+{item.get('rise_pct', 0):.1f}% RISE**\n"
-                              f"{price_desc}\n"
-                              f"Vol: {item.get('volume', 0):,}"
-                              f"{risk_info}"
-                              f"{historicals_text}",
+                    title=title,
+                    description="\n".join(description_parts),
                     color=0x00FF00,
                     url=get_item_wiki_url(item_id)
                 )
                 
-                # Add thumbnail if available
+                # Add thumbnail (top-right in Discord)
                 if thumbnail_url:
                     embed.set_thumbnail(url=thumbnail_url)
+                
+                # Add footer with metadata
+                footer_text = f"ID: {item_id}"
+                if item.get('version'):
+                    footer_text += f" | v{item.get('version')}"
+                footer_text += " | Tax: 1%"
+                embed.set_footer(text=footer_text)
+                
+                # Add timestamp
+                embed.timestamp = datetime.now()
                 
                 return embed
             await broadcast_to_all_servers(bot, spikes, "spike", spike_embed)

@@ -1542,9 +1542,20 @@ def pull_updates():
         from utils.auto_updater import update_code
         restart = request.json.get('restart_services', True) if request.json else True
         result = update_code(restart_services=restart)
+        # Ensure we always return a proper response
+        if not isinstance(result, dict):
+            return jsonify({"success": False, "message": "Update function returned invalid response"}), 500
         return jsonify(result)
     except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
+        import traceback
+        import logging
+        error_trace = traceback.format_exc()
+        logging.error(f"Update error: {str(e)}\n{error_trace}")
+        return jsonify({
+            "success": False, 
+            "message": f"Update failed: {str(e)}",
+            "error": str(e)
+        }), 500
 
 
 # Initialize database and start polling thread on module import

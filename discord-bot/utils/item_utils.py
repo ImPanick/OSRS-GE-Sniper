@@ -10,16 +10,21 @@ def get_item_thumbnail_url(item_name: str, item_id: int = None) -> str:
     
     Args:
         item_name: The item name (e.g., "Lantadyme")
-        item_id: Optional item ID for fallback
+        item_id: Item ID (preferred method for OSRS Wiki)
     
     Returns:
         URL to the item's thumbnail image
     """
+    # OSRS Wiki uses item ID directly for images
+    if item_id:
+        # Format: https://oldschool.runescape.wiki/images/{item_id}.png
+        return f"https://oldschool.runescape.wiki/images/{item_id}.png"
+    
     if not item_name:
         return None
     
+    # Fallback to item name if ID not available
     # Format item name for wiki URL
-    # OSRS Wiki uses underscores for spaces and capitalizes first letter
     wiki_name = item_name.strip()
     
     # Replace spaces with underscores
@@ -33,7 +38,6 @@ def get_item_thumbnail_url(item_name: str, item_id: int = None) -> str:
     wiki_name = urllib.parse.quote(wiki_name, safe='_')
     
     # OSRS Wiki image URL format
-    # https://oldschool.runescape.wiki/images/{item_name}.png
     thumbnail_url = f"https://oldschool.runescape.wiki/images/{wiki_name}.png"
     
     return thumbnail_url

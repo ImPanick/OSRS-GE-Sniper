@@ -34,6 +34,9 @@ export default function AdminPage() {
       if (error.response?.status === 401) {
         setAuthenticated(false)
         localStorage.removeItem('admin_key')
+        alert('Authentication failed. Please enter your admin key again.')
+      } else {
+        console.error('Failed to load data:', error)
       }
     }
   }
@@ -58,14 +61,36 @@ export default function AdminPage() {
     try {
       const result = await apiClient.pullUpdates(true)
       if (result.success) {
-        alert('Update successful! Services are restarting...')
+        const message = result.docker_restart 
+          ? `Update successful! ${result.message}\n\nDocker restart: ${result.docker_restart.message || 'Completed'}`
+          : `Update successful! ${result.message}`
+        alert(message)
         setTimeout(() => window.location.reload(), 5000)
       } else {
-        alert(`Update failed: ${result.message}`)
+        const errorMsg = result.message || result.error || 'Unknown error occurred'
+        alert(`Update failed: ${errorMsg}${result.docker_note ? '\n\n' + result.docker_note : ''}`)
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to pull updates:', error)
-      alert('Failed to pull updates')
+      let errorMsg = 'Failed to pull updates'
+      
+      if (error.response?.status === 401) {
+        errorMsg = 'Authentication failed. Please check:\n' +
+          '1. Your admin key is correct in config.json\n' +
+          '2. You have entered the correct admin key in the admin panel\n' +
+          '3. Try logging out and logging back in'
+        // Clear invalid admin key
+        localStorage.removeItem('admin_key')
+        setAuthenticated(false)
+      } else if (error.response?.data?.error) {
+        errorMsg = error.response.data.error
+      } else if (error.response?.data?.message) {
+        errorMsg = error.response.data.message
+      } else if (error.message) {
+        errorMsg = error.message
+      }
+      
+      alert(`Update failed: ${errorMsg}\n\nCheck the browser console for more details.`)
     } finally {
       setLoading(false)
     }
