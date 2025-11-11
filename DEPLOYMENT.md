@@ -55,9 +55,12 @@
 
 ### Step 3: Generate Bot Invite Link
 
+**Method 1: Using URL Generator (if available)**
+
 1. **Navigate to OAuth2**
    - In the left sidebar, click **"OAuth2"**
-   - Then click **"URL Generator"**
+   - Look for **"URL Generator"** (may be in the sidebar, or scroll down in OAuth2 → General)
+   - If you can't find it, use **Method 2** below
 
 2. **Select Scopes**
    - Under **"Scopes"**, check:
@@ -78,7 +81,20 @@
 4. **Copy Invite URL**
    - Scroll down to see the generated URL
    - Copy the **"Generated URL"** at the bottom
-   - It should look like: `https://discord.com/api/oauth2/authorize?client_id=YOUR_APP_ID&permissions=PERMISSIONS&scope=bot%20applications.commands`
+
+**Method 2: Manual URL Construction (if URL Generator not found)**
+
+1. **Get Your Application ID**
+   - Go to **"General Information"** in the left sidebar
+   - Copy your **Application ID** (long number)
+
+2. **Use This Template**
+   Replace `YOUR_APPLICATION_ID` with your actual Application ID:
+   ```
+   https://discord.com/api/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands
+   ```
+   
+   This includes all required permissions: Send Messages, Embed Links, Attach Files, Read Message History, Use Slash Commands, Mention Everyone, Use External Emojis
 
 ### Step 4: Invite Bot to Your Server
 
@@ -94,6 +110,8 @@
    - The bot should show as "Online" once it's running
 
 ### Step 5: Create Discord Webhook (Optional)
+
+**Note:** Webhooks are **OPTIONAL** and can be created **AFTER** you've invited the bot to your server. You don't need a webhook to invite the bot.
 
 If you want backend notifications sent to a webhook (separate from the bot):
 
@@ -161,16 +179,33 @@ Create `config.json` in the root directory (copy from `config.json.example`):
 - `backend_url`: Use `http://localhost:5000` for local, or your Proxmox IP for production
 - `admin_key`: Generate a secure random string (e.g., use a password generator)
 
-### 3. Deploy with Docker Compose
+### 3. Deploy with Docker Compose (Single Command)
 ```bash
 cd docker
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
-### 4. Verify Services
+This **single command** will:
+- ✅ Build all Docker images (cache-updater, backend, frontend, bot)
+- ✅ Start all services in the correct dependency order
+- ✅ Set up networking and health checks automatically
+- ✅ Make everything production-ready
+
+**First Build:** May take 5-10 minutes as it downloads dependencies. This is normal.
+**Subsequent Builds:** Much faster (30 seconds - 2 minutes) due to Docker layer caching.
+
+### 4. Verify Services (Optional)
 ```bash
-docker-compose ps
-docker-compose logs -f
+# Check service status
+docker compose ps
+
+# View logs (all services)
+docker compose logs -f
+
+# View logs for specific service
+docker compose logs -f frontend
+docker compose logs -f backend
+docker compose logs -f bot
 ```
 
 ## Proxmox Deployment

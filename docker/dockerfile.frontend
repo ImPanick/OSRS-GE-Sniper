@@ -5,10 +5,30 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
+# Configure npm for maximum reliability and speed
+RUN npm config set registry https://registry.npmjs.org/ && \
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 60000 && \
+    npm config set fetch-timeout 300000 && \
+    npm config set maxsockets 1 && \
+    npm config set prefer-offline false
+
 # Copy package files
-COPY frontend/package.json ./
-# Check if package-lock.json exists, if not use npm install
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+COPY frontend/package.json* ./
+
+# Install dependencies - optimized for first-time builds
+# Use npm install with optimized flags for reliability
+RUN echo "📦 Installing dependencies..." && \
+    if [ -f package-lock.json ]; then \
+        echo "✓ Using package-lock.json with npm ci" && \
+        npm ci --no-audit --prefer-offline --progress=false --loglevel=error || \
+        (echo "⚠ npm ci failed, using npm install" && npm install --no-audit --prefer-offline --progress=false --loglevel=error); \
+    else \
+        echo "⚠ No package-lock.json, using npm install (this may take a few minutes)" && \
+        npm install --no-audit --prefer-offline --progress=false --loglevel=error --legacy-peer-deps; \
+    fi && \
+    echo "✓ Dependencies installed successfully"
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -19,7 +39,9 @@ COPY frontend/ .
 # Build Next.js
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV NEXT_PUBLIC_API_URL=http://backend:5000
-RUN npm run build
+RUN echo "🔨 Building Next.js application..." && \
+    npm run build && \
+    echo "✓ Build completed successfully"
 
 # Production image, copy all the files and run next
 FROM base AS runner
@@ -36,9 +58,12 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
 # Copy built application
-COPY --from=builder /app/public ./public
+# Next.js standalone output already includes public files, but ensure directory exists
+RUN mkdir -p ./public
+# Copy standalone output (this includes public assets automatically)
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Note: public files are included in standalone output, so no separate copy needed
 
 USER nextjs
 

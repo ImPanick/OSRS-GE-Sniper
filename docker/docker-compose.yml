@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Cache updater - runs first to populate item cache
   cache-updater:
@@ -51,6 +49,8 @@ services:
     build:
       context: ..
       dockerfile: docker/dockerfile.frontend
+      args:
+        - NODE_ENV=production
     ports:
       - "3000:3000"
     environment:
@@ -67,7 +67,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
   # Discord bot service
   bot:

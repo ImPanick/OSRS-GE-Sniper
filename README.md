@@ -37,11 +37,19 @@ A Discord bot and web dashboard for tracking OSRS Grand Exchange price movements
    # Edit config.json with your Discord token, webhook, etc.
    ```
 
-4. **Deploy with Docker**
+4. **Deploy with Docker (Single Command)**
    ```bash
    cd docker
-   docker-compose up -d --build
+   docker compose up -d --build
    ```
+   
+   This single command will:
+   - Build all services (cache-updater, backend, frontend, bot)
+   - Start all services in the correct order
+   - Set up networking and health checks
+   - Make everything production-ready
+   
+   **Note:** The first build may take 5-10 minutes as it downloads dependencies. Subsequent builds are much faster.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 
