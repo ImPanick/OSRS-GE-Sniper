@@ -55,46 +55,45 @@
 
 ### Step 3: Generate Bot Invite Link
 
-**Method 1: Using URL Generator (if available)**
-
-1. **Navigate to OAuth2**
-   - In the left sidebar, click **"OAuth2"**
-   - Look for **"URL Generator"** (may be in the sidebar, or scroll down in OAuth2 → General)
-   - If you can't find it, use **Method 2** below
-
-2. **Select Scopes**
-   - Under **"Scopes"**, check:
-     - ✅ **bot**
-     - ✅ **applications.commands** (for slash commands)
-
-3. **Select Bot Permissions**
-   - Under **"Bot Permissions"**, check:
-     - ✅ **Send Messages**
-     - ✅ **Embed Links**
-     - ✅ **Attach Files**
-     - ✅ **Read Message History**
-     - ✅ **Use Slash Commands**
-     - ✅ **Mention Everyone** (for role pings)
-     - ✅ **Use External Emojis**
-     - ✅ **Add Reactions** (optional)
-
-4. **Copy Invite URL**
-   - Scroll down to see the generated URL
-   - Copy the **"Generated URL"** at the bottom
-
-**Method 2: Manual URL Construction (if URL Generator not found)**
+**Note:** Discord removed the OAuth2 URL Generator from their interface. You now need to manually construct the invite URL.
 
 1. **Get Your Application ID**
-   - Go to **"General Information"** in the left sidebar
-   - Copy your **Application ID** (long number)
+   - Go to https://discord.com/developers/applications
+   - Click on your application (e.g., "OSRS Sniper")
+   - In the left sidebar, click **"General Information"**
+   - Copy your **Application ID** (it's a long number, like `123456789012345678`)
 
-2. **Use This Template**
-   Replace `YOUR_APPLICATION_ID` with your actual Application ID:
+2. **Construct the Invite URL**
+   
+   Replace `YOUR_APPLICATION_ID` in this URL with your actual Application ID:
    ```
-   https://discord.com/api/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands
+   https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands&integration_type=0
    ```
    
-   This includes all required permissions: Send Messages, Embed Links, Attach Files, Read Message History, Use Slash Commands, Mention Everyone, Use External Emojis
+   The `integration_type=0` parameter ensures it's a "Guild Install" (server install), not "User Install" (DM install).
+   
+   **Example:** If your Application ID is `123456789012345678`, your URL would be:
+   ```
+   https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=2147832064&scope=bot%20applications.commands&integration_type=0
+   ```
+
+3. **What This URL Includes:**
+   - **Scopes:** `bot` and `applications.commands` (for slash commands)
+   - **Permissions:** 
+     - Send Messages (512)
+     - Embed Links (16384)
+     - Attach Files (32768)
+     - Read Message History (65536)
+     - Use Slash Commands (2147483648)
+     - Mention Everyone (131072)
+     - Use External Emojis (262144)
+     - **Total Permission Value:** 2147832064
+
+4. **Alternative: Use Online Generator**
+   
+   If you prefer a visual tool, you can use:
+   - https://discordapi.com/permissions.html
+   - Select your permissions, enter your Application ID, and it will generate the URL for you
 
 ### Step 4: Invite Bot to Your Server
 

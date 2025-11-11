@@ -71,10 +71,12 @@ For complete step-by-step instructions, see [DEPLOYMENT.md](DEPLOYMENT.md#discor
    - Copy the bot token
 
 3. **Generate Invite Link**
-   - Go to "OAuth2" → "URL Generator"
-   - Select scopes: `bot` and `applications.commands`
-   - Select permissions: Send Messages, Embed Links, Use Slash Commands, Mention Everyone
-   - Copy the generated URL
+   - Get your Application ID from "General Information"
+   - Use this URL template (replace `YOUR_APPLICATION_ID`):
+     ```
+     https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands
+     ```
+   - Or use https://discordapi.com/permissions.html for a visual generator
 
 4. **Invite Bot**
    - Open the invite URL in your browser

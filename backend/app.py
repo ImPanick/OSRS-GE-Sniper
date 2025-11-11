@@ -393,14 +393,19 @@ def notify(title, items, color):
 
 def poll():
     """Main polling loop with proper error handling"""
+    print("[POLL] Starting GE activity tracking...")
     load_names()
     last_dumps = []
     last_spikes = []
     consecutive_errors = 0
     max_consecutive_errors = 10
+    poll_count = 0
     
     while True:
         try:
+            poll_count += 1
+            if poll_count % 10 == 0:  # Log every 10 polls (every ~80 seconds)
+                print(f"[POLL] Tracking active - completed {poll_count} polls")
             fetch_all()
             consecutive_errors = 0  # Reset error counter on success
             
@@ -842,6 +847,8 @@ def server_config(guild_id):
 @rate_limit(max_requests=5, window=300)  # 5 attempts per 5 minutes
 def setup_save_token():
     """Save Discord bot token"""
+    global CONFIG  # Declare global at the top of the function
+    
     if not is_local_request():
         return jsonify({"error": "Setup can only be done from local network"}), 403
     
@@ -871,7 +878,6 @@ def setup_save_token():
             return jsonify({"error": "Failed to save configuration"}), 500
         
         # Reload global CONFIG
-        global CONFIG
         with open(CONFIG_PATH, 'r') as f:
             CONFIG = json.load(f)
         
@@ -960,6 +966,8 @@ def setup_save_server():
 @rate_limit(max_requests=10, window=60)
 def setup_save_webhook():
     """Save Discord webhook"""
+    global CONFIG  # Declare global at the top of the function
+    
     if not is_local_request():
         return jsonify({"error": "Setup can only be done from local network"}), 403
     
@@ -982,7 +990,7 @@ def setup_save_webhook():
             except IOError:
                 return jsonify({"error": "Failed to save configuration"}), 500
             
-            global CONFIG
+            # Reload global CONFIG
             with open(CONFIG_PATH, 'r') as f:
                 CONFIG = json.load(f)
         
@@ -1071,7 +1079,7 @@ def admin_delete_server(guild_id):
 
 # Auto-updater endpoints
 @app.route('/api/update/check', methods=['GET'])
-@require_admin_key
+@require_admin_key()
 def check_updates():
     """Check if updates are available"""
     try:
@@ -1082,7 +1090,7 @@ def check_updates():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/update/status', methods=['GET'])
-@require_admin_key
+@require_admin_key()
 def update_status():
     """Get update status and history"""
     try:
@@ -1092,7 +1100,7 @@ def update_status():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/update/pull', methods=['POST'])
-@require_admin_key
+@require_admin_key()
 def pull_updates():
     """Pull latest updates from GitHub"""
     try:
@@ -1104,14 +1112,37 @@ def pull_updates():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-if __name__ == '__main__':
+# Initialize database and start polling thread on module import
+# This ensures tracking works regardless of how Flask is started (direct run, WSGI, etc.)
+_poll_thread_started = False
+
+def _start_background_tasks():
+    """Start background tasks (database init and polling thread)"""
+    global _poll_thread_started
+    
+    if _poll_thread_started:
+        return  # Already started
+    
     # Initialize database on startup
     try:
         init_db()
+        print("[+] Database initialized")
     except Exception as e:
         print(f"[ERROR] Failed to initialize database: {e}")
     
-    threading.Thread(target=poll, daemon=True).start()
+    # Start polling thread
+    try:
+        poll_thread = threading.Thread(target=poll, daemon=True)
+        poll_thread.start()
+        _poll_thread_started = True
+        print("[+] GE tracking thread started")
+    except Exception as e:
+        print(f"[ERROR] Failed to start polling thread: {e}")
+
+# Start background tasks when module is imported
+_start_background_tasks()
+
+if __name__ == '__main__':
     # Note: host='0.0.0.0' is required for Docker container networking
     # In production, ensure proper firewall/network security
     # This is safe when running in Docker with proper network isolation

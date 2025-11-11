@@ -1,8 +1,6 @@
 # Discord Bot Invite Link - Step by Step
 
-## Quick Method: Manual URL Construction
-
-If you can't find the "URL Generator" in OAuth2, you can manually create the invite URL.
+**Note:** Discord has removed the OAuth2 URL Generator from their interface. You must now manually construct the invite URL using the method below.
 
 ### Step 1: Get Your Application ID
 
@@ -29,7 +27,12 @@ The permissions you need are:
 Replace `YOUR_APPLICATION_ID` with your actual Application ID:
 
 ```
-https://discord.com/api/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands
+```
+
+**Example:** If your Application ID is `123456789012345678`, your URL would be:
+```
+https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=2147832064&scope=bot%20applications.commands
 ```
 
 ### Step 4: Use the URL
@@ -41,16 +44,16 @@ https://discord.com/api/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissio
 
 ---
 
-## Alternative: Finding URL Generator in Discord UI
+## Alternative: Use Online Permission Calculator
 
-The URL Generator location may vary. Try these locations:
+If you want a visual tool to help generate the URL:
 
-1. **OAuth2 → URL Generator** (if visible in sidebar)
-2. **OAuth2 → General** (scroll down, might be at bottom)
-3. **OAuth2 → Redirects** (sometimes the generator is here)
-4. Look for a button/tab that says "URL Generator" or "Invite Link"
+1. Go to https://discordapi.com/permissions.html
+2. Select the permissions you need (or use the preset)
+3. Enter your Application ID
+4. Copy the generated URL
 
-If you still can't find it, use the manual method above - it works exactly the same!
+This is helpful if you want to customize permissions or see what each permission does.
 
 ---
 

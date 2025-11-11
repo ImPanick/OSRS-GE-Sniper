@@ -1,13 +1,13 @@
 {
-    "discord_webhook": "https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE",
-    "discord_token": "YOUR_BOT_TOKEN_HERE",
-    "backend_url": "http://localhost:5000",
-    "alert_channel_id": 123456789012345678,
-    "admin_key": "CHANGE_THIS_TO_A_SECURE_RANDOM_STRING",
-    "thresholds": {
-      "margin_min": 2000000,
-      "dump_drop_pct": 18,
-      "spike_rise_pct": 20,
-      "min_volume": 400
-    }
+  "discord_webhook": "https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE",
+  "discord_token": "MTQzNzYwMjAyNzA2MzczODU0OA.GQgphs.yeYLPrkj7LgTsPADh0YxefGWsckUFyJjzXAWe0",
+  "backend_url": "http://backend:5000",
+  "alert_channel_id": 123456789012345678,
+  "admin_key": "CHANGE_THIS_TO_A_SECURE_RANDOM_STRING",
+  "thresholds": {
+    "margin_min": 2000000,
+    "dump_drop_pct": 18,
+    "spike_rise_pct": 20,
+    "min_volume": 400
   }
+}

@@ -10,10 +10,25 @@ if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
 if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+
+print(f"[BOT] Loading config from: {CONFIG_PATH}")
+print(f"[BOT] Config file exists: {os.path.exists(CONFIG_PATH)}")
+
 with open(CONFIG_PATH, 'r') as f:
     CONFIG = json.load(f)
+
+# Validate token exists and show first/last few chars for debugging (don't log full token)
+token = CONFIG.get('discord_token', '').strip()
+if token:
+    token_preview = f"{token[:10]}...{token[-10:]}" if len(token) > 20 else "***"
+    print(f"[BOT] Token found: {token_preview} (length: {len(token)})")
+    print(f"[BOT] Token has whitespace: {token != token.strip()}")
+else:
+    print("[BOT] ERROR: No discord_token found in config!")
+    print(f"[BOT] Config keys: {list(CONFIG.keys())}")
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True  # Required for role mentions and member access
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 @bot.event
@@ -21,7 +36,37 @@ async def on_ready():
     print(f"{bot.user} ONLINE")
     for filename in ["flips", "dumps", "spikes", "watchlist", "stats", "config", "nightly"]:
         await bot.load_extension(f"cogs.{filename}")
+    
+    # Auto-register all existing servers
+    print(f"[BOT] Registering {len(bot.guilds)} servers with backend...")
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        try:
+            # Call backend to auto-create config file
+            response = requests.get(f"{CONFIG['backend_url']}/api/server_config/{guild_id}", timeout=5)
+            if response.status_code == 200:
+                print(f"[BOT] ✓ Registered server: {guild.name} ({guild_id})")
+            else:
+                print(f"[BOT] ⚠ Failed to register server: {guild.name} ({guild_id}) - HTTP {response.status_code}")
+        except Exception as e:
+            print(f"[BOT] ⚠ Error registering server {guild.name} ({guild_id}): {e}")
+    
     poll_alerts.start()
+
+@bot.event
+async def on_guild_join(guild):
+    """Auto-register server when bot joins"""
+    guild_id = str(guild.id)
+    print(f"[BOT] Joined new server: {guild.name} ({guild_id})")
+    try:
+        # Call backend to auto-create config file
+        response = requests.get(f"{CONFIG['backend_url']}/api/server_config/{guild_id}", timeout=5)
+        if response.status_code == 200:
+            print(f"[BOT] ✓ Auto-registered server: {guild.name} ({guild_id})")
+        else:
+            print(f"[BOT] ⚠ Failed to auto-register server: {guild.name} ({guild_id}) - HTTP {response.status_code}")
+    except Exception as e:
+        print(f"[BOT] ⚠ Error auto-registering server {guild.name} ({guild_id}): {e}")
 
 @tasks.loop(seconds=20)
 async def poll_alerts():
@@ -183,4 +228,31 @@ async def poll_alerts():
     except Exception as e:
         print(f"[ERROR] poll_alerts: {e}")
 
-bot.run(CONFIG["discord_token"])
+# Ensure token is stripped of any whitespace
+token = CONFIG.get("discord_token", "").strip()
+if not token:
+    print("[BOT] ERROR: discord_token is missing or empty in config.json")
+    print("[BOT] Please check your config.json file and ensure discord_token is set")
+    exit(1)
+
+# Validate token format (basic check)
+if token == "YOUR_BOT_TOKEN_HERE" or "YOUR_BOT_TOKEN" in token.upper():
+    print("[BOT] ERROR: discord_token is still set to placeholder value!")
+    print("[BOT] Please update config.json with your actual bot token from Discord Developer Portal")
+    print("[BOT] Get it from: https://discord.com/developers/applications → Your App → Bot → Token")
+    exit(1)
+
+print(f"[BOT] Attempting to connect with token: {token[:10]}...{token[-10:]}")
+print("[BOT] If you see 401 errors, the token is invalid. Get a new one from Discord Developer Portal.")
+try:
+    bot.run(token)
+except Exception as e:
+    print(f"[BOT] FATAL ERROR: {e}")
+    print("[BOT] The bot token is invalid or expired.")
+    print("[BOT] Steps to fix:")
+    print("[BOT] 1. Go to https://discord.com/developers/applications")
+    print("[BOT] 2. Select your application → Bot section")
+    print("[BOT] 3. Click 'Reset Token' and copy the new token")
+    print("[BOT] 4. Update config.json with the new token")
+    print("[BOT] 5. Restart: docker compose restart bot")
+    raise
