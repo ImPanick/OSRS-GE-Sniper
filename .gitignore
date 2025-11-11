@@ -154,3 +154,4 @@ test_token.py
 backend/utils/history.db-journal
 backend/utils/history.db-journal
 *.db-journal
+*.db-journal

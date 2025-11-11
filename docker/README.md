@@ -2,12 +2,12 @@
 
 ## Services Overview
 
-This Docker Compose setup includes 4 services:
+This Docker Compose setup includes 4 services (project name: `osrs-sniper`):
 
-1. **cache-updater** - Populates item cache from OSRS Wiki API
-2. **backend** - Flask API server (port 5000)
-3. **frontend** - Next.js web interface (port 3000)
-4. **bot** - Discord bot service
+1. **osrs-sniper-cache-updater** - Populates item cache from OSRS Wiki API
+2. **osrs-sniper-backend** - Flask API server (port 5000)
+3. **osrs-sniper-frontend** - Next.js web interface (port 3000)
+4. **osrs-sniper-bot** - Discord bot service
 
 ## Startup Order
 
@@ -50,6 +50,12 @@ docker-compose logs -f frontend
 docker-compose logs -f backend
 docker-compose logs -f bot
 docker-compose logs -f cache-updater
+
+# Or by container name
+docker logs -f osrs-sniper-frontend
+docker logs -f osrs-sniper-backend
+docker logs -f osrs-sniper-bot
+docker logs -f osrs-sniper-cache-updater
 ```
 
 ## Restart Services

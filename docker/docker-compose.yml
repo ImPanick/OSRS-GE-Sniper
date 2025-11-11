@@ -1,6 +1,9 @@
+name: osrs-sniper
+
 services:
   # Cache updater - runs first to populate item cache
   cache-updater:
+    container_name: osrs-sniper-cache-updater
     build:
       context: ..
       dockerfile: docker/dockerfile.backend
@@ -19,6 +22,7 @@ services:
 
   # Backend API service
   backend:
+    container_name: osrs-sniper-backend
     build:
       context: ..
       dockerfile: docker/dockerfile.backend
@@ -46,6 +50,7 @@ services:
 
   # Next.js frontend web service
   frontend:
+    container_name: osrs-sniper-frontend
     build:
       context: ..
       dockerfile: docker/dockerfile.frontend
@@ -71,6 +76,7 @@ services:
 
   # Discord bot service
   bot:
+    container_name: osrs-sniper-bot
     build:
       context: ..
       dockerfile: docker/dockerfile.bot
