@@ -23,8 +23,13 @@ app = Flask(__name__, static_folder='static', static_url_path='/static')
 # Allow all origins in development, but should be restricted in production
 cors_origins = os.getenv('CORS_ORIGINS', '*').split(',')
 CORS(app, resources={r"/api/*": {"origins": cors_origins}})
+# Primary OSRS API (official)
 BASE = "https://prices.runescape.wiki/api/v1/osrs"
-HEADERS = {"User-Agent": "OSRS-Sniper (+your-discord)"}
+# Fallback API
+FALLBACK_BASE = "https://grandexchange.tools/api"
+# Improved User-Agent as required by API documentation
+HEADERS = {"User-Agent": "OSRS-GE-Sniper/1.0 (https://github.com/your-repo; contact@example.com)"}
+FALLBACK_HEADERS = {"User-Agent": "OSRS-GE-Sniper/1.0 (fallback)"}
 
 # Load config with fallback paths for Docker and local development
 CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))
@@ -212,12 +217,90 @@ TIME_WINDOWS = {
     "14d": "14d"
 }
 
+def fetch_with_fallback(url, headers, fallback_url=None, fallback_headers=None, timeout=30):
+    """
+    Fetch data from primary API with automatic fallback to secondary API.
+    Returns (data, source) where source is 'primary' or 'fallback'
+    """
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        return response.json(), 'primary'
+    except (requests.exceptions.RequestException, requests.exceptions.Timeout) as e:
+        print(f"[WARN] Primary API failed ({url}): {e}")
+        if fallback_url and fallback_headers:
+            try:
+                print(f"[INFO] Attempting fallback API: {fallback_url}")
+                response = requests.get(fallback_url, headers=fallback_headers, timeout=timeout)
+                response.raise_for_status()
+                return response.json(), 'fallback'
+            except Exception as fallback_error:
+                print(f"[ERROR] Fallback API also failed: {fallback_error}")
+                raise
+        raise
+
+def convert_1h_data_to_dict(h1_data):
+    """
+    Convert 1h price data from array format to dict format for easier access.
+    OSRS API returns: {"data": [{"id": 2, "avgHighPrice": 2550, ...}]}
+    We need: {"2": {"avgHighPrice": 2550, "volume": 500, ...}}
+    """
+    if isinstance(h1_data, dict) and "data" in h1_data:
+        # Convert array to dict keyed by item ID
+        result = {}
+        for item in h1_data["data"]:
+            item_id = str(item.get("id"))
+            result[item_id] = {
+                "avgHighPrice": item.get("avgHighPrice"),
+                "avgLowPrice": item.get("avgLowPrice"),
+                "volume": item.get("volume", 0),
+                "timestamp": item.get("timestamp")
+            }
+        return result
+    elif isinstance(h1_data, dict):
+        # Already in dict format (fallback API might return different format)
+        return h1_data
+    else:
+        return {}
+
 def fetch_all():
     global top_items, dump_items, spike_items, all_items
     try:
-        latest = requests.get(f"{BASE}/latest", headers=HEADERS, timeout=30).json()
-        h1 = requests.get(f"{BASE}/1h", headers=HEADERS, timeout=30).json()
-        mapping = requests.get(f"{BASE}/mapping", headers=HEADERS, timeout=30).json()
+        # Fetch latest prices with fallback
+        latest, latest_source = fetch_with_fallback(
+            f"{BASE}/latest",
+            HEADERS,
+            f"{FALLBACK_BASE}/latest" if FALLBACK_BASE else None,
+            FALLBACK_HEADERS if FALLBACK_BASE else None,
+            timeout=30
+        )
+        if latest_source == 'fallback':
+            print("[INFO] Using fallback API for latest prices")
+        
+        # Fetch 1-hour prices with fallback - use correct endpoint /prices/1h
+        h1_raw, h1_source = fetch_with_fallback(
+            f"{BASE}/prices/1h",
+            HEADERS,
+            f"{FALLBACK_BASE}/1h" if FALLBACK_BASE else None,
+            FALLBACK_HEADERS if FALLBACK_BASE else None,
+            timeout=30
+        )
+        if h1_source == 'fallback':
+            print("[INFO] Using fallback API for 1h prices")
+        
+        # Convert 1h data from array format to dict format
+        h1 = convert_1h_data_to_dict(h1_raw)
+        
+        # Fetch mapping with fallback
+        mapping, mapping_source = fetch_with_fallback(
+            f"{BASE}/mapping",
+            HEADERS,
+            f"{FALLBACK_BASE}/mapping" if FALLBACK_BASE else None,
+            FALLBACK_HEADERS if FALLBACK_BASE else None,
+            timeout=30
+        )
+        if mapping_source == 'fallback':
+            print("[INFO] Using fallback API for mapping")
         
         # Build ID → limit map
         limit_map = {str(m['id']): m.get('limit', 0) for m in mapping}
@@ -602,8 +685,36 @@ def api_all_items():
     time_data = {}
     if time_window in TIME_WINDOWS:
         try:
-            endpoint = f"{BASE}/{time_window}"
-            time_data = requests.get(endpoint, headers=HEADERS, timeout=30).json()
+            # Use correct endpoint path for 1h: /prices/1h instead of /1h
+            if time_window == "1h":
+                endpoint = f"{BASE}/prices/1h"
+                fallback_endpoint = f"{FALLBACK_BASE}/1h" if FALLBACK_BASE else None
+            else:
+                endpoint = f"{BASE}/{time_window}"
+                fallback_endpoint = f"{FALLBACK_BASE}/{time_window}" if FALLBACK_BASE else None
+            
+            time_data_raw, _ = fetch_with_fallback(
+                endpoint,
+                HEADERS,
+                fallback_endpoint,
+                FALLBACK_HEADERS if FALLBACK_BASE else None,
+                timeout=30
+            )
+            # Convert to expected format if needed
+            if time_window == "1h" and isinstance(time_data_raw, dict) and "data" in time_data_raw:
+                # Convert array format to dict format
+                time_data = {"data": {}}
+                for item in time_data_raw["data"]:
+                    item_id = str(item.get("id"))
+                    time_data["data"][item_id] = {
+                        "volume": item.get("volume", 0),
+                        "avgHighPrice": item.get("avgHighPrice"),
+                        "avgLowPrice": item.get("avgLowPrice"),
+                        "highTime": item.get("timestamp"),
+                        "lowTime": item.get("timestamp")
+                    }
+            else:
+                time_data = time_data_raw
         except (requests.RequestException, ValueError, KeyError) as e:
             print(f"[WARNING] Failed to fetch {time_window} data: {e}")
             time_data = {}
@@ -627,29 +738,28 @@ def api_all_items():
 @app.route('/api/osrs_status')
 @rate_limit(max_requests=30, window=60)
 def api_osrs_status():
-    """Check OSRS Wiki API connection status"""
+    """Check OSRS Wiki API connection status with fallback"""
     try:
-        response = requests.get(f"{BASE}/latest", headers=HEADERS, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            return jsonify({
-                "status": "connected",
-                "online": True,
-                "item_count": len(data.get("data", {})),
-                "last_check": int(datetime.now().timestamp())
-            })
-        else:
-            return jsonify({
-                "status": "error",
-                "online": False,
-                "error": f"HTTP {response.status_code}",
-                "last_check": int(datetime.now().timestamp())
-            }), 500
+        data, source = fetch_with_fallback(
+            f"{BASE}/latest",
+            HEADERS,
+            f"{FALLBACK_BASE}/latest" if FALLBACK_BASE else None,
+            FALLBACK_HEADERS if FALLBACK_BASE else None,
+            timeout=10
+        )
+        item_count = len(data.get("data", {}))
+        return jsonify({
+            "status": "connected",
+            "online": True,
+            "item_count": item_count,
+            "source": source,  # 'primary' or 'fallback'
+            "last_check": int(datetime.now().timestamp())
+        })
     except requests.exceptions.Timeout:
         return jsonify({
             "status": "timeout",
             "online": False,
-            "error": "Connection timeout",
+            "error": "Connection timeout (both APIs)",
             "last_check": int(datetime.now().timestamp())
         }), 500
     except Exception as e:
@@ -724,10 +834,32 @@ def api_nightly():
     min_profit = request.args.get('min_profit', 1_000_000, type=int)
     
     try:
-        # Get all items with their data
-        latest = requests.get(f"{BASE}/latest", headers=HEADERS, timeout=30).json()
-        h1 = requests.get(f"{BASE}/1h", headers=HEADERS, timeout=30).json()
-        mapping = requests.get(f"{BASE}/mapping", headers=HEADERS, timeout=30).json()
+        # Get all items with their data using fallback
+        latest, _ = fetch_with_fallback(
+            f"{BASE}/latest",
+            HEADERS,
+            f"{FALLBACK_BASE}/latest" if FALLBACK_BASE else None,
+            FALLBACK_HEADERS if FALLBACK_BASE else None,
+            timeout=30
+        )
+        
+        # Fetch 1-hour prices with fallback - use correct endpoint /prices/1h
+        h1_raw, _ = fetch_with_fallback(
+            f"{BASE}/prices/1h",
+            HEADERS,
+            f"{FALLBACK_BASE}/1h" if FALLBACK_BASE else None,
+            FALLBACK_HEADERS if FALLBACK_BASE else None,
+            timeout=30
+        )
+        h1 = convert_1h_data_to_dict(h1_raw)
+        
+        mapping, _ = fetch_with_fallback(
+            f"{BASE}/mapping",
+            HEADERS,
+            f"{FALLBACK_BASE}/mapping" if FALLBACK_BASE else None,
+            FALLBACK_HEADERS if FALLBACK_BASE else None,
+            timeout=30
+        )
         
         limit_map = {str(m['id']): m.get('limit', 0) for m in mapping}
         
