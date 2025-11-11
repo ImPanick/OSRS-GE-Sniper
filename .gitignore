@@ -149,3 +149,7 @@ temp/
 *.crt
 .terraform/
 .terraform.lock.hcl
+backend/utils/history.db-journal
+test_token.py
+backend/utils/history.db-journal
+backend/utils/history.db-journal

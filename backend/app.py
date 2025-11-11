@@ -40,6 +40,14 @@ if os.path.exists(CONFIG_PATH):
     except (json.JSONDecodeError, IOError):
         CONFIG = {}
 
+# Set default thresholds if not present
+if "thresholds" not in CONFIG:
+    CONFIG["thresholds"] = {}
+CONFIG["thresholds"].setdefault("margin_min", 100000)  # 100k profit (was 2M - too high!)
+CONFIG["thresholds"].setdefault("dump_drop_pct", 5)     # 5% drop (was 18% - too high!)
+CONFIG["thresholds"].setdefault("spike_rise_pct", 5)    # 5% rise (was 20% - too high!)
+CONFIG["thresholds"].setdefault("min_volume", 100)      # 100 volume (was 400 - reasonable)
+
 # Thread-safe storage for item data
 _item_lock = threading.Lock()
 item_names = {}
@@ -234,7 +242,8 @@ def fetch_all():
             })
             
             # === MARGINS ===
-            if profit > CONFIG["thresholds"]["margin_min"] and low > 1000:
+            # Lowered minimum price from 1k to allow cheaper items
+            if profit > CONFIG["thresholds"]["margin_min"] and low > 100:
                 # Get price historicals for margins/flips
                 historicals = get_price_historicals(int(id_str))
                 margins.append({
@@ -246,7 +255,8 @@ def fetch_all():
                 })
             
             # === DUMPS & SPIKES ===
-            if vol > CONFIG["thresholds"]["min_volume"] and low > 500000:
+            # Lowered price threshold from 500k to 10k to catch more items
+            if vol > CONFIG["thresholds"]["min_volume"] and low > 10000:
                 h1_data = h1.get(id_str, {})
                 prev_avg = h1_data.get("avgHighPrice", high) or high
                 drop_pct = (prev_avg - low) / prev_avg * 100
