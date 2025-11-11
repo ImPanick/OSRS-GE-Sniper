@@ -7,13 +7,13 @@
 ### Complete Invite URL (Guild Install):
 
 ```
-https://discord.com/oauth2/authorize?client_id=1437602027063738548&permissions=2147832064&scope=bot%20applications.commands&integration_type=0
+https://discord.com/oauth2/authorize?client_id=1437602027063738548&permissions=2416267520&scope=bot%20applications.commands&integration_type=0
 ```
 
 ### What Each Parameter Does:
 
 - `client_id=1437602027063738548` - Your Application ID
-- `permissions=2147832064` - All required bot permissions
+- `permissions=2416267520` - All required bot permissions (includes Manage Roles)
 - `scope=bot%20applications.commands` - Bot scope + slash commands
 - `integration_type=0` - **Guild Install** (server install, not DM install)
 
@@ -22,7 +22,7 @@ https://discord.com/oauth2/authorize?client_id=1437602027063738548&permissions=2
 If the above doesn't work, try this simpler version:
 
 ```
-https://discord.com/oauth2/authorize?client_id=1437602027063738548&permissions=2147832064&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=1437602027063738548&permissions=2416267520&scope=bot%20applications.commands
 ```
 
 ## How to Use
@@ -35,13 +35,18 @@ https://discord.com/oauth2/authorize?client_id=1437602027063738548&permissions=2
 
 ## Permissions Included
 
-- Send Messages
-- Embed Links  
-- Attach Files
-- Read Message History
-- Use Slash Commands
-- Mention Everyone
-- Use External Emojis
+- Send Messages (512)
+- Embed Links (16384)
+- Attach Files (32768)
+- Read Message History (65536)
+- Use Slash Commands (2147483648)
+- Mention Everyone (131072)
+- Use External Emojis (262144)
+- **Manage Roles (268435456)** - Required for role assignment via admin panel
+
+**Total Permission Value:** 2416267520
+
+**Why Manage Roles?** The bot needs this permission to assign roles to members when admins use the web interface to manage role assignments for notifications.
 
 ## Troubleshooting
 

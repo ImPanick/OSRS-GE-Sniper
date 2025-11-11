@@ -75,10 +75,17 @@ docker compose logs backend
 Generate invite URL using your Application ID:
 
 ```
-https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2416267520&scope=bot%20applications.commands
 ```
 
 Replace `YOUR_APPLICATION_ID` with your actual Application ID.
+
+**Required Permissions:**
+- Send Messages, Embed Links, Attach Files, Read Message History
+- Use Slash Commands, Mention Everyone, Use External Emojis
+- **Manage Roles** (required for role assignment via admin panel)
+
+**Total Permission Value:** 2416267520
 
 **Share this link with users** - they use it to invite your bot to their servers.
 

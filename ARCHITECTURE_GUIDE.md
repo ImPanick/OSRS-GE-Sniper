@@ -36,7 +36,7 @@ You need **ONE bot token** from Discord Developer Portal. This is YOUR bot that 
 Users generate an invite link using YOUR Application ID:
 
 ```
-https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2416267520&scope=bot%20applications.commands
 ```
 
 When they invite it:
@@ -44,6 +44,7 @@ When they invite it:
 - Bot can see the server (guild_id)
 - Bot can send messages to configured channels
 - Bot can ping configured roles
+- Bot can assign/remove roles (via admin panel)
 
 ### 3. **Per-Server Configuration System**
 

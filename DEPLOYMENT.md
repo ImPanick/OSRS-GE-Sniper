@@ -67,14 +67,14 @@
    
    Replace `YOUR_APPLICATION_ID` in this URL with your actual Application ID:
    ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands&integration_type=0
+   https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2416267520&scope=bot%20applications.commands&integration_type=0
    ```
    
    The `integration_type=0` parameter ensures it's a "Guild Install" (server install), not "User Install" (DM install).
    
    **Example:** If your Application ID is `123456789012345678`, your URL would be:
    ```
-   https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=2147832064&scope=bot%20applications.commands&integration_type=0
+   https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=2416267520&scope=bot%20applications.commands&integration_type=0
    ```
 
 3. **What This URL Includes:**
@@ -87,7 +87,10 @@
      - Use Slash Commands (2147483648)
      - Mention Everyone (131072)
      - Use External Emojis (262144)
-     - **Total Permission Value:** 2147832064
+     - **Manage Roles (268435456)** - Required for role assignment via admin panel
+     - **Total Permission Value:** 2416267520
+   
+   **Why Manage Roles?** The bot needs this permission to assign roles to members when admins use the web interface to manage role assignments for notifications.
 
 4. **Alternative: Use Online Generator**
    

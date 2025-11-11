@@ -19,20 +19,23 @@ The permissions you need are:
 - Use Slash Commands (2147483648)
 - Mention Everyone (131072)
 - Use External Emojis (262144)
+- **Manage Roles (268435456)** - Required for role assignment via admin panel
 
-**Total Permission Value:** `512 + 16384 + 32768 + 65536 + 2147483648 + 131072 + 262144 = 2147832064`
+**Total Permission Value:** `512 + 16384 + 32768 + 65536 + 2147483648 + 131072 + 262144 + 268435456 = 2416267520`
+
+**Why Manage Roles?** The bot needs this permission to assign roles to members when admins use the web interface to manage role assignments for notifications.
 
 ### Step 3: Construct the Invite URL
 
 Replace `YOUR_APPLICATION_ID` with your actual Application ID:
 
 ```
-https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2416267520&scope=bot%20applications.commands
 ```
 
 **Example:** If your Application ID is `123456789012345678`, your URL would be:
 ```
-https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=2147832064&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=2416267520&scope=bot%20applications.commands
 ```
 
 ### Step 4: Use the URL

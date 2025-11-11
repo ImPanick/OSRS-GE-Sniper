@@ -10,9 +10,12 @@ A Discord bot and web dashboard for tracking OSRS Grand Exchange price movements
 - **Discord Notifications**: Per-server channel routing with role pings based on risk/quality
 - **Web Dashboard**: View top flips, dumps, spikes, and volume tracker
 - **Per-Server Configuration**: Each Discord server can configure channels and roles
+- **Server Information Management**: View roles, members, channels, and online count via admin panel
+- **Role Assignment**: Assign roles to members directly from the web interface
+- **Rich Embeds**: Detailed notifications with item thumbnails, price history, risk metrics, and profit calculations
 - **Risk Assessment**: Calculates risk scores, liquidity, and profitability confidence
 - **Item Thumbnails**: All notifications include item images from OSRS Wiki
-- **Admin Controls**: Ban/remove servers, manage configurations
+- **Admin Controls**: Ban/remove servers, manage configurations, view server details
 
 ## Quick Start
 
@@ -74,9 +77,10 @@ For complete step-by-step instructions, see [DEPLOYMENT.md](DEPLOYMENT.md#discor
    - Get your Application ID from "General Information"
    - Use this URL template (replace `YOUR_APPLICATION_ID`):
      ```
-     https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2147832064&scope=bot%20applications.commands
+     https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=2416267520&scope=bot%20applications.commands
      ```
    - Or use https://discordapi.com/permissions.html for a visual generator
+   - **Note:** The bot requires "Manage Roles" permission for role assignment features
 
 4. **Invite Bot**
    - Open the invite URL in your browser
@@ -114,8 +118,16 @@ Edit `config.json`:
 
 - `/dashboard` - Main dashboard with top flips, dumps, spikes
 - `/volume_tracker` - All GE items with filtering and sorting
-- `/config/<guild_id>` - Per-server configuration
-- `/admin` - Admin panel (requires admin_key)
+- `/config/<guild_id>` - Per-server configuration with:
+  - Server information (roles, members, channels, online count)
+  - Role assignment interface (assign roles to members)
+  - Channel selection (click to copy channel IDs)
+  - Role selection (click to copy role IDs)
+  - Bot permission status
+- `/admin` - Admin panel (requires admin_key) with:
+  - Server management (ban/unban/delete)
+  - Auto-updater controls
+  - Server list with status
 
 ## Architecture
 
