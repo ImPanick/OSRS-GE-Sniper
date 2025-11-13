@@ -20,10 +20,17 @@ Services start in the following order with health checks:
 
 ## Quick Start
 
+**IMPORTANT**: Always run `docker-compose` from the `docker/` directory. The paths are configured to work universally from this location.
+
 ```bash
+# Navigate to the docker directory
 cd docker
+
+# Start all services
 docker-compose up -d --build
 ```
+
+The docker-compose.yml uses environment variables with sensible defaults that work when run from the `docker/` directory. If you need to use absolute paths or run from a different location, create a `.env` file in the `docker/` directory (see `.env.example`).
 
 ## Access Services
 
@@ -83,16 +90,31 @@ docker-compose up -d --build
 
 ## Environment Variables
 
-### Frontend
-- `NEXT_PUBLIC_API_URL` - Backend API URL (default: http://backend:5000)
+### Path Configuration (docker-compose.yml)
 
-### Backend
+These variables control where Docker looks for files. They default to relative paths (`../`) which work when running from the `docker/` directory:
+
+- `REPO_ROOT` - Repository root directory (default: `..`)
+- `CONFIG_FILE` - Path to config.json (default: `${REPO_ROOT}/config.json`)
+- `BACKEND_UTILS` - Backend utils directory (default: `${REPO_ROOT}/backend/utils`)
+- `BACKEND_SERVER_CONFIGS` - Server configs directory (default: `${REPO_ROOT}/backend/server_configs`)
+- `DISCORD_BOT_DATA` - Discord bot data directory (default: `${REPO_ROOT}/discord-bot/data`)
+
+To override these, create a `.env` file in the `docker/` directory (see `.env.example`).
+
+### Service Environment Variables
+
+#### Frontend
+- `NEXT_PUBLIC_API_URL` - Backend API URL (default: http://localhost:5000)
+
+#### Backend
 - `FLASK_ENV` - Flask environment (production)
-- `CONFIG_PATH` - Path to config.json
+- `CONFIG_PATH` - Path to config.json inside container (`/app/config.json`)
+- `DB_PATH` - Path to database file (`/app/utils/history.db`)
 
-### Bot
+#### Bot
 - `BACKEND_URL` - Backend API URL (http://backend:5000)
-- `CONFIG_PATH` - Path to config.json
+- `CONFIG_PATH` - Path to config.json inside container (`/app/config.json`)
 
 ## Troubleshooting
 
@@ -105,6 +127,7 @@ docker-compose up -d --build
 - Check if cache-updater completed: `docker-compose logs cache-updater`
 - Check backend logs: `docker-compose logs backend`
 - Verify config.json exists and is valid
+- **Path issues**: If you see mount errors, ensure you're running `docker-compose` from the `docker/` directory, or create a `.env` file with absolute paths
 
 ### Services not connecting
 - Ensure all services are on the same network: `sniper-network`
