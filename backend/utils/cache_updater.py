@@ -31,10 +31,12 @@ def fetch_item_mapping():
         data = response.json()
         
         # Build id -> name mapping
+        # Store original names with spaces for search functionality
+        # (Wiki URLs can be generated on-the-fly by replacing spaces with underscores)
         item_map = {}
         for item in data:
             item_id = str(item['id'])
-            item_name = item['name'].replace(' ', '_')  # Wiki-friendly
+            item_name = item['name']  # Keep original name with spaces
             item_map[item_id] = item_name
         
         print(f"✅ Cached {len(item_map)} items")
@@ -61,8 +63,15 @@ def load_existing_cache():
         try:
             with open(CACHE_FILE, 'r') as f:
                 cache = json.load(f)
-            print(f"📂 Loaded existing cache: {len(cache)} items")
-            return cache
+            # Normalize existing cache entries: convert underscores to spaces for search compatibility
+            # (legacy cache files had underscores, new format uses spaces)
+            normalized_cache = {}
+            for item_id, item_name in cache.items():
+                # Convert underscores back to spaces for search functionality
+                normalized_name = item_name.replace('_', ' ')
+                normalized_cache[item_id] = normalized_name
+            print(f"📂 Loaded existing cache: {len(normalized_cache)} items (normalized)")
+            return normalized_cache
         except Exception as e:
             print(f"❌ Existing cache corrupt: {e}")
     return {}
@@ -85,6 +94,14 @@ def update_cache():
         success = save_cache(item_map)
         if success:
             print(f"🎯 Cache update complete — {len(item_map)} items ready")
+            # Update in-memory item_names dictionary
+            try:
+                from utils.shared import set_item_data, get_item_lock
+                with get_item_lock():
+                    set_item_data(item_names=item_map)
+                print(f"✅ Updated in-memory item_names dictionary ({len(item_map)} items)")
+            except Exception as e:
+                print(f"⚠️  Failed to update in-memory item_names: {e}")
         else:
             print("⚠️  Cache failed to save — using existing")
     else:

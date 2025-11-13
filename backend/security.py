@@ -71,15 +71,28 @@ def sanitize_webhook_url(url: str) -> str:
 def sanitize_token(token: str) -> str:
     """
     Validate Discord bot token format
+    Discord bot tokens have the format: [part1].[part2].[part3]
+    Each part is base64-like (A-Z, a-z, 0-9, _, -)
+    Total length is typically 59-80 characters
     """
     if not token:
         return None
     
     token = str(token).strip()
     
-    # Discord tokens are base64-like, typically 59 characters
-    # Format: XXXX.XXXX.XXXX
-    if not re.match(r'^[A-Za-z0-9_-]{50,70}$', token):
+    # Discord tokens have format: XXXX.XXXX.XXXX (three parts separated by dots)
+    # Allow dots and base64-like characters, length 50-100 characters
+    # Must contain exactly 2 dots (separating 3 parts)
+    if not re.match(r'^[A-Za-z0-9_.-]{50,100}$', token):
+        return None
+    
+    # Ensure it has the correct structure: exactly 2 dots separating 3 parts
+    parts = token.split('.')
+    if len(parts) != 3:
+        return None
+    
+    # Each part should be non-empty
+    if not all(part for part in parts):
         return None
     
     return token

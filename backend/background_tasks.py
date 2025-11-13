@@ -95,7 +95,6 @@ def get_dump_quality(drop_pct, volume, low_price):
 
 def load_names():
     """Load item names from cache"""
-    import utils.shared
     cache_path = os.path.join(os.path.dirname(__file__), "utils", "item_cache.json")
     if not os.path.exists(cache_path):
         cache_path = "utils/item_cache.json"
@@ -105,8 +104,15 @@ def load_names():
     if os.path.exists(cache_path):
         try:
             with open(cache_path, 'r', encoding='utf-8') as f:
-                utils.shared.item_names = json.load(f)
-            print(f"Loaded {len(utils.shared.item_names)} items from cache")
+                raw_cache = json.load(f)
+            # Normalize cache entries: convert underscores to spaces for search compatibility
+            # (legacy cache files had underscores, new format uses spaces)
+            utils.shared.item_names = {}
+            for item_id, item_name in raw_cache.items():
+                # Convert underscores back to spaces for search functionality
+                normalized_name = item_name.replace('_', ' ')
+                utils.shared.item_names[item_id] = normalized_name
+            print(f"Loaded {len(utils.shared.item_names)} items from cache (normalized)")
         except (json.JSONDecodeError, IOError) as e:
             print(f"[ERROR] Failed to load item cache: {e}")
             utils.shared.item_names = {}
