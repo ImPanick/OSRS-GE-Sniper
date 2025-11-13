@@ -22,6 +22,31 @@ Services start in the following order with health checks:
 
 **IMPORTANT**: Always run `docker-compose` from the `docker/` directory. The paths are configured to work universally from this location.
 
+### Step 1: Initialize config.json
+
+Before starting Docker, ensure `config.json` exists in the repository root. If it doesn't exist, it will be created from `config.json.example`:
+
+**Linux/macOS:**
+```bash
+cd docker
+./init-config.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+cd docker
+.\init-config.ps1
+```
+
+**Manual:**
+```bash
+# From repository root
+cp config.json.example config.json
+# Then edit config.json and set your discord_token and admin_key
+```
+
+### Step 2: Start Services
+
 ```bash
 # Navigate to the docker directory
 cd docker
@@ -29,6 +54,8 @@ cd docker
 # Start all services
 docker-compose up -d --build
 ```
+
+**Note**: If `config.json` doesn't exist when Docker starts, Docker will create a **directory** instead of mounting the file. Always ensure the file exists before running `docker-compose`.
 
 The docker-compose.yml uses environment variables with sensible defaults that work when run from the `docker/` directory. If you need to use absolute paths or run from a different location, create a `.env` file in the `docker/` directory (see `.env.example`).
 
@@ -128,6 +155,13 @@ To override these, create a `.env` file in the `docker/` directory (see `.env.ex
 - Check backend logs: `docker-compose logs backend`
 - Verify config.json exists and is valid
 - **Path issues**: If you see mount errors, ensure you're running `docker-compose` from the `docker/` directory, or create a `.env` file with absolute paths
+
+### config.json is a directory instead of a file
+This happens when Docker tries to mount a file that doesn't exist. To fix:
+1. **Stop Docker containers**: `docker-compose down`
+2. **Remove the directory**: `rm -rf ../config.json` (Linux/macOS) or `Remove-Item -Recurse -Force ..\config.json` (Windows)
+3. **Create the file**: Run `./init-config.sh` (Linux/macOS) or `.\init-config.ps1` (Windows) from the `docker/` directory
+4. **Restart**: `docker-compose up -d`
 
 ### Services not connecting
 - Ensure all services are on the same network: `sniper-network`

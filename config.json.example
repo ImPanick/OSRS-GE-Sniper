@@ -1,14 +1,19 @@
 {
-  "discord_webhook": "https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE",
+  "_comment": "Configuration file for OSRS GE Sniper - See README.md for setup instructions",
+  "_required_for_bot": "discord_token and backend_url are REQUIRED for the Discord bot to start",
+  "_required_for_backend": "admin_key is recommended (auto-generated if missing), thresholds have defaults",
+  
   "discord_token": "YOUR_BOT_TOKEN_HERE",
   "backend_url": "http://backend:5000",
-  "alert_channel_id": 123456789012345678,
   "admin_key": "CHANGE_THIS_TO_A_SECURE_RANDOM_STRING",
+  
+  "discord_webhook": "https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE",
+  
   "thresholds": {
-    "margin_min": 2000000,
-    "dump_drop_pct": 18,
-    "spike_rise_pct": 20,
-    "min_volume": 400
+    "margin_min": 100000,
+    "dump_drop_pct": 5,
+    "spike_rise_pct": 5,
+    "min_volume": 100
   }
 }
 
