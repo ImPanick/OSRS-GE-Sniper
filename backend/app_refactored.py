@@ -15,7 +15,7 @@ from routes_admin import bp as admin_bp
 from background_tasks import start_background_tasks
 
 # Import shared utilities
-from utils.shared import is_local_request
+from utils.shared import CONFIG, is_local_request
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 
@@ -86,3 +86,4 @@ if __name__ == '__main__':
     # 4. Admin key authentication for sensitive endpoints
     # DO NOT change this unless you understand Docker networking implications
     app.run(host='0.0.0.0', port=5000)
+
