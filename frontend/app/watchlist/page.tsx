@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { apiClient, DumpItem } from '@/lib/api'
 import { Card } from '@/components/Card'
 import { DumpsTable } from '@/components/DumpsTable'
@@ -13,7 +13,7 @@ export default function WatchlistPage() {
   const [loading, setLoading] = useState(true)
   const [guildId] = useState<string>('default') // TODO: Get from context or URL params
 
-  const fetchWatchlist = async () => {
+  const fetchWatchlist = useCallback(async () => {
     try {
       const items = await apiClient.getWatchlist(guildId)
       setWatchlist(items)
@@ -32,13 +32,13 @@ export default function WatchlistPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [guildId])
 
   useEffect(() => {
     fetchWatchlist()
     const interval = setInterval(fetchWatchlist, 30000) // Refresh every 30 seconds
     return () => clearInterval(interval)
-  }, [guildId])
+  }, [fetchWatchlist])
 
   const handleWatchToggle = async (itemId: number, itemName: string, isWatched: boolean) => {
     try {

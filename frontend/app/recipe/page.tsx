@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, Suspense, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { apiClient } from '@/lib/api'
 import { Card } from '@/components/Card'
@@ -48,7 +48,7 @@ function RecipePageContent() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchRecipe = async (name: string) => {
+  const fetchRecipe = useCallback(async (name: string) => {
     if (!name.trim()) return
 
     setLoading(true)
@@ -64,7 +64,7 @@ function RecipePageContent() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     const name = searchParams.get('name')
@@ -72,7 +72,7 @@ function RecipePageContent() {
       setSearchQuery(name)
       fetchRecipe(name)
     }
-  }, [searchParams])
+  }, [searchParams, fetchRecipe])
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()

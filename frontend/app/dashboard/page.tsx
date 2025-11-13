@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { apiClient, DumpItem } from '@/lib/api'
 import { Card } from '@/components/Card'
 import { TierFilterGrid, TierFilter } from '@/components/TierFilterGrid'
@@ -40,7 +40,7 @@ export default function DashboardPage() {
     fetchWatchlist()
   }, [guildId])
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true)
       
@@ -67,13 +67,13 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [selectedFilter])
 
   useEffect(() => {
     fetchData()
     const interval = setInterval(fetchData, 30000) // Refresh every 30 seconds
     return () => clearInterval(interval)
-  }, [selectedFilter])
+  }, [fetchData])
 
   const handleWatchToggle = async (itemId: number, itemName: string, isWatched: boolean) => {
     try {
