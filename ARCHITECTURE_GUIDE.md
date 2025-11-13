@@ -191,7 +191,8 @@ When the bot finds a dump/spike/flip:
 OSRS-GE-Sniper/
 ├── config.json                    ← YOUR bot token (one time setup)
 ├── backend/
-│   ├── app.py                     ← Flask API (serves data + configs)
+│   ├── app.py                     ← Flask API (JSON endpoints only, no HTML/UI)
+│   ├── routes_*.py                ← API route modules (JSON-only)
 │   ├── server_configs/            ← Per-server configs (auto-created)
 │   │   ├── 123456789.json         ← Server A's config
 │   │   ├── 987654321.json         ← Server B's config
@@ -202,8 +203,15 @@ OSRS-GE-Sniper/
 │   └── utils/
 │       └── notification_router.py ← Routes alerts to servers
 └── frontend/
-    └── app/config/[guildId]/      ← Web UI for server configuration
+    ├── app/                        ← Next.js pages (ALL user-facing UI)
+    │   ├── dashboard/              ← Dashboard page
+    │   ├── config/[guildId]/      ← Server configuration UI
+    │   ├── admin/                  ← Admin panel
+    │   └── ...
+    └── components/                ← React components
 ```
+
+**Architecture Note:** The Flask backend is strictly API-only. It provides JSON endpoints for data and configuration. All HTML pages, dashboards, forms, and user interfaces are implemented in the Next.js frontend. Do NOT add HTML/Jinja/HTMX templates to the backend.
 
 ## 🚀 Current Status
 

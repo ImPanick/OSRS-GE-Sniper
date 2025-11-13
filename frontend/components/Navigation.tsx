@@ -2,11 +2,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { TrendingUp, BarChart3, Settings, Home } from 'lucide-react'
+import { TrendingUp, BarChart3, Settings, Home, Star, Search, Package, Droplet } from 'lucide-react'
 import { clsx } from 'clsx'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: Home },
+  { href: '/watchlist', label: 'Watchlist', icon: Star },
+  { href: '/item', label: 'Item Lookup', icon: Search },
+  { href: '/recipe', label: 'Recipe', icon: Package },
+  { href: '/decant', label: 'Decant', icon: Droplet },
   { href: '/volume-tracker', label: 'Volume Tracker', icon: BarChart3 },
   { href: '/admin', label: 'Admin', icon: Settings },
 ]

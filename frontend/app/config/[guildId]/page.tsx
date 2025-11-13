@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card } from '@/components/Card'
-import { Settings, Save, RotateCcw, Users, Hash, Shield, CheckCircle, XCircle } from 'lucide-react'
+import { Settings, Save, RotateCcw, Users, Hash, Shield, CheckCircle, XCircle, Star } from 'lucide-react'
 import axios from 'axios'
 import { apiClient } from '@/lib/api'
 
@@ -20,6 +20,8 @@ export default function ConfigPage() {
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<string>('')
   const [selectedMember, setSelectedMember] = useState<string | null>(null)
+  const [tiers, setTiers] = useState<any>(null)
+  const [minTierName, setMinTierName] = useState<string>('')
 
   const fetchConfig = async () => {
     try {
@@ -48,6 +50,16 @@ export default function ConfigPage() {
     }
   }
 
+  const fetchTiers = async () => {
+    try {
+      const data = await apiClient.getTiers(guildId)
+      setTiers(data)
+      setMinTierName(data.min_tier_name || '')
+    } catch (error) {
+      console.error('Failed to fetch tiers:', error)
+    }
+  }
+
   const handleAssignRole = async (userId: string, roleId: string, action: 'add' | 'remove' = 'add') => {
     try {
       await apiClient.assignRole(guildId, userId, roleId, action)
@@ -62,6 +74,7 @@ export default function ConfigPage() {
   useEffect(() => {
     fetchConfig()
     fetchServerInfo()
+    fetchTiers()
     // Refresh server info every 30 seconds
     const interval = setInterval(fetchServerInfo, 30000)
     return () => clearInterval(interval)
@@ -73,6 +86,21 @@ export default function ConfigPage() {
 
     setSaving(true)
     setSaveStatus('')
+
+    // Collect tier settings
+    const tierSettings: any = {}
+    if (tiers?.tiers) {
+      tiers.tiers.forEach((tier: any) => {
+        const roleInput = document.getElementById(`tier_${tier.name}_role`) as HTMLInputElement
+        const enabledInput = document.getElementById(`tier_${tier.name}_enabled`) as HTMLInputElement
+        if (roleInput && enabledInput) {
+          tierSettings[tier.name] = {
+            role_id: roleInput.value.trim() || null,
+            enabled: enabledInput.checked
+          }
+        }
+      })
+    }
 
     const formData = {
       channels: {
@@ -99,6 +127,8 @@ export default function ConfigPage() {
         spikes: (document.getElementById('spikes') as HTMLInputElement)?.value.trim() || null,
         flips: (document.getElementById('flips') as HTMLInputElement)?.value.trim() || null,
       },
+      tier_settings: tierSettings,
+      min_tier_name: minTierName || null,
     }
 
     try {
@@ -515,6 +545,83 @@ export default function ConfigPage() {
           </div>
         </div>
       </Card>
+
+      {/* Tier Settings */}
+      {tiers && (
+        <Card title="Tier Settings" icon={<Star className="w-5 h-5 text-yellow-400" />}>
+          <p className="text-dark-400 mb-6">
+            Configure Discord role mentions for each tier and set minimum tier for automatic alerts.
+          </p>
+
+          {/* Minimum Tier */}
+          <div className="mb-6 p-4 bg-dark-800 rounded-lg border border-dark-700">
+            <label className="block text-sm font-medium text-dark-300 mb-2">
+              Minimum Tier for Automatic Alerts
+            </label>
+            <select
+              value={minTierName}
+              onChange={(e) => setMinTierName(e.target.value)}
+              className="w-full max-w-xs px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">All Tiers</option>
+              {tiers.tiers?.map((tier: any) => (
+                <option key={tier.name} value={tier.name}>
+                  {tier.emoji} {tier.name.charAt(0).toUpperCase() + tier.name.slice(1)}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-dark-500 mt-2">
+              Only tiers at or above this level will trigger automatic Discord alerts.
+            </p>
+          </div>
+
+          {/* Tier Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {tiers.tiers?.map((tier: any) => {
+              const setting = tiers.guild_tier_settings?.[tier.name] || {}
+              const roleId = setting.role_id || ''
+              const enabled = setting.enabled !== false
+
+              return (
+                <div key={tier.name} className="p-4 bg-dark-800 rounded-lg border border-dark-700">
+                  <h3 className="text-lg font-semibold text-white mb-2">
+                    {tier.emoji} {tier.name.charAt(0).toUpperCase() + tier.name.slice(1)}
+                  </h3>
+                  <p className="text-xs text-dark-400 mb-3">
+                    Score: {tier.min_score} - {tier.max_score} | {tier.group}
+                  </p>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs text-dark-400 mb-1">Discord Role ID</label>
+                      <input
+                        type="text"
+                        id={`tier_${tier.name}_role`}
+                        defaultValue={roleId}
+                        placeholder="Role ID (e.g., 123456789012345678)"
+                        className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      />
+                      <p className="text-xs text-dark-500 mt-1">
+                        Leave empty to disable role mentions for this tier.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          id={`tier_${tier.name}_enabled`}
+                          defaultChecked={enabled}
+                          className="w-4 h-4 text-primary-500 bg-dark-700 border-dark-600 rounded focus:ring-primary-500"
+                        />
+                        <span className="text-sm text-dark-300">Enable alerts for this tier</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+      )}
     </div>
   )
 }

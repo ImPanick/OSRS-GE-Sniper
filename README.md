@@ -116,8 +116,10 @@ Edit `config.json`:
 
 ## Web Dashboard
 
+All web UI is provided by the Next.js frontend (accessible at `http://localhost:3000`):
+
 - `/dashboard` - Main dashboard with top flips, dumps, spikes
-- `/volume_tracker` - All GE items with filtering and sorting
+- `/volume-tracker` - All GE items with filtering and sorting
 - `/config/<guild_id>` - Per-server configuration with:
   - Server information (roles, members, channels, online count)
   - Role assignment interface (assign roles to members)
@@ -129,11 +131,16 @@ Edit `config.json`:
   - Auto-updater controls
   - Server list with status
 
+**Note:** The Flask backend (`http://localhost:5000`) provides JSON APIs only. All HTML pages and user interfaces are served by the Next.js frontend.
+
 ## Architecture
 
-- **Backend** (`backend/app.py`): Flask API serving item data and web dashboard
+- **Backend** (`backend/app.py`): Flask API providing JSON endpoints only. All user-facing UI is handled by the Next.js frontend.
+- **Frontend** (`frontend/`): Next.js/React application with Tailwind CSS - the ONLY user interface for dashboards, configuration, and data visualization.
 - **Discord Bot** (`discord-bot/bot.py`): Discord bot with slash commands and notifications
 - **Cache Updater** (`backend/utils/cache_updater.py`): Updates item cache every 6 hours
+
+**Important:** The Flask backend is strictly API-only. Do NOT add HTML/Jinja/HTMX templates to the backend. All new UI work belongs in the Next.js frontend under `frontend/`.
 
 ## Development
 

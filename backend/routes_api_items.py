@@ -1,5 +1,7 @@
 """
 API routes for items, recipes, and decants
+
+NOTE: This module defines JSON APIs only. UI is handled exclusively by the Next.js frontend.
 """
 from flask import Blueprint, jsonify, request
 from utils.shared import (

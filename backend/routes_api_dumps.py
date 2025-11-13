@@ -1,126 +1,14 @@
 """
 API routes for dumps, spikes, tiers, and watchlist
+
+NOTE: This module defines JSON APIs only. UI is handled exclusively by the Next.js frontend.
 """
-from flask import Blueprint, jsonify, request, render_template_string
+from flask import Blueprint, jsonify, request
 from utils.shared import get_item_lock, get_item_data
 from utils.database import get_db_connection, get_recent_history
 from utils.item_metadata import get_item_meta, get_buy_limit
 from security import rate_limit, validate_json_payload, sanitize_guild_id, require_admin_key
 import sqlite3
-
-# HTML template for dumps table (used by HTMX)
-DUMPS_TABLE_TEMPLATE = """
-<div class="table-container">
-  <table>
-    <thead>
-      <tr>
-        <th>Tier</th>
-        <th>Item Name</th>
-        <th>Score</th>
-        <th>Drop %</th>
-        <th>Volume Spike %</th>
-        <th>Oversupply %</th>
-        <th>Flags</th>
-        <th>High / Low</th>
-        <th>Max Buy / 4h</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% if dumps %}
-        {% for dump in dumps %}
-        <tr>
-          <td>
-            {% if dump.tier_emoji and dump.tier %}
-              <strong>{{ dump.tier_emoji }} {{ dump.tier|title }}</strong>
-            {% elif dump.emoji and dump.tier %}
-              <strong>{{ dump.emoji }} {{ dump.tier|title }}</strong>
-            {% else %}
-              —
-            {% endif %}
-          </td>
-          <td>
-            <a href="https://prices.runescape.wiki/osrs/item/{{ dump.id }}" target="_blank" style="color: var(--accent-primary); text-decoration: none; font-weight: 500;">
-              {{ dump.name }}
-            </a>
-          </td>
-          <td><strong>{{ dump.score or '—' }}</strong></td>
-          <td class="dump">-{{ "%.1f"|format(dump.drop_pct) if dump.drop_pct else 0 }}%</td>
-          <td>{{ "%.1f"|format(dump.vol_spike_pct) if dump.vol_spike_pct else 0 }}%</td>
-          <td>{{ "%.1f"|format(dump.oversupply_pct) if dump.oversupply_pct else 0 }}%</td>
-          <td>
-            {% if dump.flags %}
-              {% for flag in dump.flags %}
-                {% if flag == 'slow_buy' %}
-                  <span style="color: var(--accent-warning);">🐌</span>
-                {% elif flag == 'one_gp_dump' %}
-                  <span style="color: var(--accent-danger);">💰</span>
-                {% elif flag == 'super' %}
-                  <span style="color: var(--accent-success);">⭐</span>
-                {% endif %}
-              {% endfor %}
-            {% else %}
-              —
-            {% endif %}
-          </td>
-          <td>
-            <span class="price-buy">{{ "{:,}".format(dump.high) if dump.high else "—" }}</span> / 
-            <span class="price-sell">{{ "{:,}".format(dump.low) if dump.low else "—" }}</span>
-          </td>
-          <td><strong>{{ "{:,}".format(dump.max_buy_4h) if dump.max_buy_4h else "—" }}</strong></td>
-          <td>
-            <button 
-              class="btn secondary watch-btn" 
-              data-item-id="{{ dump.id }}"
-              data-item-name="{{ dump.name }}"
-              onclick="watchItem(this, {{ dump.id }}, '{{ dump.name|e }}'); return false;">
-              Watch
-            </button>
-          </td>
-        </tr>
-        {% endfor %}
-      {% else %}
-        <tr>
-          <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 2rem;">
-            No dump opportunities found
-          </td>
-        </tr>
-      {% endif %}
-    </tbody>
-  </table>
-</div>
-<script>
-  async function watchItem(btn, itemId, itemName) {
-    try {
-      const response = await fetch('/api/watchlist/add', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          guild_id: 'default',
-          item_id: itemId,
-          item_name: itemName
-        })
-      });
-      
-      const data = await response.json();
-      if (data.success) {
-        btn.textContent = 'Watching';
-        btn.classList.add('watching');
-        btn.disabled = true;
-        // Update global watchlist set
-        if (typeof watchlistItems !== 'undefined') {
-          watchlistItems.add(itemId);
-        }
-      } else {
-        alert('Failed to add to watchlist: ' + (data.error || 'Unknown error'));
-      }
-    } catch (error) {
-      console.error('Watch error:', error);
-      alert('Error adding to watchlist: ' + error.message);
-    }
-  }
-</script>
-"""
 
 bp = Blueprint('api_dumps', __name__, url_prefix='/api')
 
@@ -142,7 +30,6 @@ def api_dumps():
             - one_gp_dump: Items that dropped to 1 GP
             - super: Platinum tier or higher (score >= 51)
         limit (int, optional): Maximum number of results to return
-        format (str, optional): Response format - 'json' (default) or 'html'
     
     Returns:
         JSON array of dump opportunities, each containing:
@@ -169,17 +56,11 @@ def api_dumps():
     Example:
         GET /api/dumps?tier=gold&limit=10
         GET /api/dumps?group=gems&special=super
-        GET /api/dumps?format=html
     """
     tier = request.args.get('tier', '').strip().lower()
     group = request.args.get('group', '').strip().lower()
     special = request.args.get('special', '').strip().lower()
     limit = request.args.get('limit', type=int)
-    response_format = request.args.get('format', 'json').lower()
-    
-    # Validate format parameter
-    if response_format not in ['json', 'html']:
-        response_format = 'json'
     
     try:
         # Import dump engine (uses cached results by default)
@@ -216,7 +97,6 @@ def api_dumps():
                 'name': opp.get('name', 'Unknown'),
                 'tier': opp.get('tier', 'iron'),
                 'emoji': opp.get('emoji', '🔩'),
-                'tier_emoji': opp.get('emoji', '🔩'),  # For HTML template compatibility
                 'group': opp.get('group', 'metals'),
                 'score': opp.get('score', 0.0),
                 'drop_pct': opp.get('drop_pct', 0.0),
@@ -239,16 +119,7 @@ def api_dumps():
         if limit and limit > 0:
             opportunities = opportunities[:limit]
         
-        # Return HTML format if requested
-        if response_format == 'html':
-            try:
-                return render_template_string(DUMPS_TABLE_TEMPLATE, dumps=opportunities)
-            except (KeyError, ValueError, TypeError) as e:
-                print(f"[ERROR] Failed to render template: {e}")
-                # Fallback to JSON on template error
-                return jsonify(opportunities)
-        
-        # Return JSON format (default)
+        # Return JSON format
         return jsonify(opportunities)
         
     except Exception as e:
@@ -272,12 +143,6 @@ def api_dumps():
                 
                 if limit and limit > 0:
                     opportunities = opportunities[:limit]
-                
-                if response_format == 'html':
-                    try:
-                        return render_template_string(DUMPS_TABLE_TEMPLATE, dumps=opportunities)
-                    except (KeyError, ValueError, TypeError) as e:
-                        print(f"[ERROR] Failed to render template: {e}")
                 
                 return jsonify(opportunities)
         except Exception as fallback_error:

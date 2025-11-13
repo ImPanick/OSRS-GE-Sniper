@@ -1,5 +1,8 @@
 """
 Main Flask application - refactored to use blueprints
+
+NOTE: This application provides JSON APIs only. UI is handled exclusively by the Next.js frontend.
+Do NOT add HTML/Jinja/HTMX templates or render_template calls. All new UI work belongs in frontend/.
 """
 from flask import Flask, jsonify, request
 from flask_cors import CORS
