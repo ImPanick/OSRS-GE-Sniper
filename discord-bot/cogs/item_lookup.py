@@ -37,14 +37,40 @@ class ItemLookup(commands.Cog):
             except ValueError:
                 pass
             
+            # Use enhanced API endpoint that supports both ID and name
             if item_id:
                 url = f"{CONFIG['backend_url']}/api/item/{item_id}"
             else:
-                url = f"{CONFIG['backend_url']}/api/item/search?q={requests.utils.quote(query)}"
+                url = f"{CONFIG['backend_url']}/api/item?name={requests.utils.quote(query)}"
             
             response = requests.get(url, timeout=10)
             
             if response.status_code == 404:
+                # Try search endpoint as fallback for multiple matches
+                search_url = f"{CONFIG['backend_url']}/api/item/search?q={requests.utils.quote(query)}"
+                search_response = requests.get(search_url, timeout=10)
+                
+                if search_response.status_code == 200:
+                    matches = search_response.json()
+                    if isinstance(matches, list) and len(matches) > 0:
+                        embed = Embed(
+                            title=f"Search Results for: {query}",
+                            description=f"Found {len(matches)} matches. Please be more specific or use an ID.",
+                            color=0x3498db
+                        )
+                        
+                        for match in matches[:10]:
+                            name = match.get('name', 'Unknown')
+                            match_id = match.get('id', 0)
+                            embed.add_field(
+                                name=f"{name} (ID: {match_id})",
+                                value=f"Use `/item {match_id}` or `/item {name}`",
+                                inline=False
+                            )
+                        
+                        await interaction.followup.send(embed=embed, ephemeral=True)
+                        return
+                
                 await interaction.followup.send(f"Item not found: `{query}`", ephemeral=True)
                 return
             
@@ -54,34 +80,11 @@ class ItemLookup(commands.Cog):
             
             data = response.json()
             
-            # Handle multiple matches
-            if 'matches' in data:
-                matches = data.get('matches', [])[:10]
-                if not matches:
-                    await interaction.followup.send(f"No items found matching `{query}`", ephemeral=True)
-                    return
-                
-                embed = Embed(
-                    title=f"Search Results for: {query}",
-                    description=f"Found {data.get('count', len(matches))} matches. Please be more specific.",
-                    color=0x3498db
-                )
-                
-                for match in matches:
-                    name = match.get('name', 'Unknown')
-                    item_id = match.get('id', 0)
-                    embed.add_field(
-                        name=f"{name} (ID: {item_id})",
-                        value=f"Use `/item {item_id}` or `/item {name}`",
-                        inline=False
-                    )
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                return
-            
             # Single item result
             item_id = data.get('id', 0)
             item_name = data.get('name', 'Unknown')
+            examine = data.get('examine', '')
+            members = data.get('members', True)
             high = data.get('high') or data.get('sell')
             low = data.get('low') or data.get('buy')
             volume = data.get('volume', 0)
@@ -95,30 +98,78 @@ class ItemLookup(commands.Cog):
                 url=get_item_wiki_url(item_id)
             )
             
+            # Add description with examine text if available
+            if examine:
+                embed.description = examine[:200]  # Limit length
+            
             # Add thumbnail
             thumbnail_url = get_item_thumbnail_url(item_name, item_id)
             if thumbnail_url:
                 embed.set_thumbnail(url=thumbnail_url)
             
-            # Add fields
+            # Add price fields
+            price_info = []
             if high is not None and low is not None:
-                embed.add_field(name="High / Low", value=f"{high:,} / {low:,} GP", inline=True)
+                price_info.append(f"**High / Low:** {high:,} / {low:,} GP")
             
             if volume:
-                embed.add_field(name="Volume", value=f"{volume:,}", inline=True)
+                price_info.append(f"**Volume:** {volume:,}")
             
             if max_buy_4h:
-                embed.add_field(name="Max Buy / 4h", value=f"{max_buy_4h:,}", inline=True)
+                price_info.append(f"**Max Buy / 4h:** {max_buy_4h:,}")
             
-            # Add opportunity info if available
+            if price_info:
+                embed.add_field(
+                    name="💰 Price Information",
+                    value="\n".join(price_info),
+                    inline=False
+                )
+            
+            # Add opportunity info if available (dump detection)
             if opportunity:
                 tier = opportunity.get('tier', '').capitalize()
                 score = opportunity.get('score', 0)
                 drop_pct = opportunity.get('drop_pct', 0)
+                vol_spike_pct = opportunity.get('vol_spike_pct', 0)
+                oversupply_pct = opportunity.get('oversupply_pct', 0)
                 emoji = opportunity.get('emoji', '')
+                flags = opportunity.get('flags', [])
+                
+                opp_text = []
+                opp_text.append(f"**Tier:** {emoji} {tier} (Score: {score:.1f})")
+                opp_text.append(f"**Drop %:** -{drop_pct:.1f}%")
+                
+                if vol_spike_pct > 0:
+                    opp_text.append(f"**Volume Spike:** +{vol_spike_pct:.1f}%")
+                
+                if oversupply_pct > 0:
+                    opp_text.append(f"**Oversupply:** {oversupply_pct:.1f}%")
+                
+                if flags:
+                    flag_labels = []
+                    if 'slow_buy' in flags:
+                        flag_labels.append("Slow Buy")
+                    if 'one_gp_dump' in flags:
+                        flag_labels.append("1GP Dump")
+                    if 'super' in flags:
+                        flag_labels.append("Super Tier")
+                    if flag_labels:
+                        opp_text.append(f"**Flags:** {', '.join(flag_labels)}")
+                
                 embed.add_field(
-                    name=f"{emoji} Current Opportunity",
-                    value=f"**Tier:** {tier}\n**Score:** {score:.1f}\n**Drop %:** {drop_pct:.1f}%",
+                    name=f"{emoji} Current Dump Opportunity",
+                    value="\n".join(opp_text),
+                    inline=False
+                )
+                
+                # Change embed color to indicate dump opportunity
+                embed.color = 0xff6b6b  # Red for dump opportunity
+            
+            # Add members flag
+            if not members:
+                embed.add_field(
+                    name="ℹ️ Note",
+                    value="Free-to-play item",
                     inline=False
                 )
             
@@ -153,7 +204,7 @@ class ItemLookup(commands.Cog):
             data = response.json()
             product = data.get('product', {})
             ingredients = data.get('ingredients', [])
-            spread = data.get('spread', {})
+            spread_info = data.get('spread_info', {})
             
             # Build embed
             product_name = product.get('name', item_name)
@@ -183,7 +234,7 @@ class ItemLookup(commands.Cog):
                     inline=False
                 )
             
-            # Add ingredients
+            # Add ingredients with costs
             if ingredients:
                 ingredients_text = []
                 for ing in ingredients:
@@ -192,10 +243,14 @@ class ItemLookup(commands.Cog):
                     ing_low = ing.get('low')
                     ing_max_buy = ing.get('max_buy_4h', 0)
                     ing_qty = ing.get('quantity', 1)
+                    ing_cost_low = ing.get('cost_low', 0)
+                    ing_cost_high = ing.get('cost_high', 0)
                     
                     ing_line = f"**{ing_name}** (x{ing_qty})"
                     if ing_high is not None and ing_low is not None:
-                        ing_line += f"\n  High/Low: {ing_high:,} / {ing_low:,} GP"
+                        ing_line += f"\n  Price: {ing_low:,} - {ing_high:,} GP"
+                        if ing_cost_low > 0 or ing_cost_high > 0:
+                            ing_line += f"\n  Total Cost: {ing_cost_low:,} - {ing_cost_high:,} GP"
                     if ing_max_buy:
                         ing_line += f"\n  Max Buy/4h: {ing_max_buy:,}"
                     ingredients_text.append(ing_line)
@@ -212,29 +267,52 @@ class ItemLookup(commands.Cog):
                     inline=False
                 )
             
-            # Add spread summary
-            if spread:
-                ing_total_high = spread.get('ingredient_total_high', 0)
-                ing_total_low = spread.get('ingredient_total_low', 0)
-                prod_high = spread.get('product_high', product_high)
-                prod_low = spread.get('product_low', product_low)
-                gp_per_unit_high = spread.get('gp_per_unit_high', 0)
-                gp_per_unit_low = spread.get('gp_per_unit_low', 0)
+            # Add profit calculations
+            if spread_info:
+                total_cost_low = spread_info.get('total_ingredient_cost_low', 0)
+                total_cost_high = spread_info.get('total_ingredient_cost_high', 0)
+                profit_best = spread_info.get('profit_best', 0)
+                profit_best_pct = spread_info.get('profit_best_pct', 0)
+                profit_worst = spread_info.get('profit_worst', 0)
+                profit_worst_pct = spread_info.get('profit_worst_pct', 0)
+                profit_avg = spread_info.get('profit_avg', 0)
+                profit_avg_pct = spread_info.get('profit_avg_pct', 0)
+                profit_per_limit = spread_info.get('profit_per_limit')
                 
-                spread_text = []
-                if ing_total_high and ing_total_low:
-                    spread_text.append(f"**Ingredient Cost:** {ing_total_low:,} - {ing_total_high:,} GP")
-                if prod_high and prod_low:
-                    spread_text.append(f"**Product Value:** {prod_low:,} - {prod_high:,} GP")
-                if gp_per_unit_high or gp_per_unit_low:
-                    spread_text.append(f"**GP/Unit:** {gp_per_unit_low:,} - {gp_per_unit_high:,} GP")
+                profit_text = []
                 
-                if spread_text:
+                # Total ingredient cost
+                if total_cost_low > 0 or total_cost_high > 0:
+                    profit_text.append(f"**Total Ingredient Cost:** {total_cost_low:,} - {total_cost_high:,} GP")
+                
+                # Profit scenarios
+                if profit_best is not None:
+                    profit_text.append(f"**Best Case:** +{profit_best:,} GP ({profit_best_pct:+.1f}%)")
+                    profit_text.append(f"  *Buy ingredients low, sell product high*")
+                
+                if profit_worst is not None:
+                    profit_text.append(f"**Worst Case:** {profit_worst:,} GP ({profit_worst_pct:+.1f}%)")
+                    profit_text.append(f"  *Buy ingredients high, sell product low*")
+                
+                if profit_avg is not None:
+                    profit_text.append(f"**Average:** {profit_avg:,} GP ({profit_avg_pct:+.1f}%)")
+                
+                # Profit per 4-hour limit
+                if profit_per_limit is not None:
+                    profit_text.append(f"**Profit per 4h Limit:** {profit_per_limit:,.0f} GP")
+                
+                if profit_text:
                     embed.add_field(
-                        name="💰 Profit Spread",
-                        value="\n".join(spread_text),
+                        name="💰 Profit Analysis",
+                        value="\n".join(profit_text),
                         inline=False
                     )
+                    
+                    # Change color based on profitability
+                    if profit_avg and profit_avg > 0:
+                        embed.color = 0x2ecc71  # Green for profitable
+                    elif profit_avg and profit_avg < 0:
+                        embed.color = 0xe74c3c  # Red for loss
             
             embed.set_footer(text=f"Product ID: {product_id}")
             embed.timestamp = interaction.created_at
@@ -277,30 +355,36 @@ class ItemLookup(commands.Cog):
             embed = Embed(
                 title=f"🧪 Decant: {base_name}",
                 color=0xe74c3c,
-                description=f"Comparing all dose variants"
+                description=f"Comparing all dose variants by GP per dose"
             )
             
             # Add each variant
             for variant in variants:
                 variant_name = variant.get('name', '')
-                dose = variant.get('dose', 0)
                 high = variant.get('high')
                 low = variant.get('low')
                 max_buy_4h = variant.get('max_buy_4h', 0)
                 gp_per_dose_high = variant.get('gp_per_dose_high')
                 gp_per_dose_low = variant.get('gp_per_dose_low')
                 
+                # Check if this is the best variant
+                is_best = best_variant and variant.get('dose') == best_variant.get('dose')
+                
                 variant_text = []
                 if high is not None and low is not None:
-                    variant_text.append(f"**High / Low:** {high:,} / {low:,} GP")
+                    variant_text.append(f"**Price:** {high:,} / {low:,} GP")
                 if max_buy_4h:
                     variant_text.append(f"**Max Buy / 4h:** {max_buy_4h:,}")
                 if gp_per_dose_high is not None and gp_per_dose_low is not None:
-                    variant_text.append(f"**GP/Dose:** {gp_per_dose_low:.1f} - {gp_per_dose_high:.1f} GP")
+                    gp_text = f"**GP/Dose:** {gp_per_dose_low:.2f} - {gp_per_dose_high:.2f} GP"
+                    if is_best:
+                        gp_text = f"⭐ {gp_text} ⭐"
+                    variant_text.append(gp_text)
                 
-                # Mark best variant
-                is_best = best_variant and variant.get('dose') == best_variant.get('dose')
-                field_name = f"{'⭐ ' if is_best else ''}{variant_name} ({dose} dose)"
+                # Mark best variant with star emoji
+                field_name = f"{'⭐ ' if is_best else ''}{variant_name}"
+                if is_best:
+                    field_name = f"⭐ **{variant_name}** ⭐ (Best Value)"
                 
                 embed.add_field(
                     name=field_name,
@@ -308,15 +392,30 @@ class ItemLookup(commands.Cog):
                     inline=True
                 )
             
-            # Add best variant note
+            # Add best variant summary
             if best_variant:
                 best_dose = best_variant.get('dose', 0)
-                best_gp = best_variant.get('gp_per_dose_low', 0)
+                best_gp_low = best_variant.get('gp_per_dose_low', 0)
+                best_gp_high = best_variant.get('gp_per_dose_high', 0)
+                best_name = best_variant.get('name', f'{base_name}({best_dose})')
+                
+                summary_text = []
+                summary_text.append(f"**{best_name}** offers the best value!")
+                summary_text.append(f"**GP/Dose:** {best_gp_low:.2f} - {best_gp_high:.2f} GP")
+                
+                best_max_buy = best_variant.get('max_buy_4h', 0)
+                if best_max_buy > 0:
+                    total_doses = best_dose * best_max_buy
+                    summary_text.append(f"**Max Doses / 4h:** {total_doses:,} (via {best_max_buy:,} pots)")
+                
                 embed.add_field(
-                    name="💡 Best Value",
-                    value=f"**{base_name}({best_dose})** has the best GP/dose at **{best_gp:.1f} GP/dose**",
+                    name="💡 Best Value Recommendation",
+                    value="\n".join(summary_text),
                     inline=False
                 )
+                
+                # Change color to green for best value
+                embed.color = 0x2ecc71
             
             embed.set_footer(text=f"Base: {base_name}")
             embed.timestamp = interaction.created_at

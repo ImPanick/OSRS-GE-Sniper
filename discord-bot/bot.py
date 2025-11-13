@@ -268,7 +268,7 @@ async def before_load_tier_configs():
 
 @tasks.loop(seconds=30)  # Check for tiered alerts every 30 seconds
 async def tiered_alerts():
-    """Tiered alert loop using new dump engine"""
+    """Tiered alert loop using new dump engine with watchlist filtering"""
     try:
         # Get latest dump opportunities from new engine
         dumps = requests.get(f"{CONFIG['backend_url']}/api/dumps", timeout=30).json() or []
@@ -282,34 +282,85 @@ async def tiered_alerts():
         for guild in bot.guilds:
             guild_id = str(guild.id)
             
-            # Get tier config for this guild
-            guild_tiers = tier_configs.get(guild_id, {})
-            if not guild_tiers:
+            # Get tier config for this guild (structure: {"tiers": [...], "min_tier_name": ...})
+            tier_config_data = tier_configs.get(guild_id, {})
+            if not tier_config_data:
                 continue  # Skip if no tier config loaded
             
+            # Extract tier settings dict and min_tier_name
+            tier_settings = {}
+            if isinstance(tier_config_data, dict):
+                if "tiers" in tier_config_data:
+                    # New format: {"tiers": [{"name": "iron", "role_id": ..., "enabled": ...}, ...], "min_tier_name": "ruby"}
+                    for tier_info in tier_config_data.get("tiers", []):
+                        tier_name = tier_info.get("name", "").lower()
+                        tier_settings[tier_name] = {
+                            "role_id": tier_info.get("role_id"),
+                            "enabled": tier_info.get("enabled", True),
+                            "group": tier_info.get("group", "metals"),
+                            "min_score": tier_info.get("min_score", 0),
+                            "max_score": tier_info.get("max_score", 100),
+                            "emoji": tier_info.get("emoji", "")
+                        }
+                    min_tier_name = tier_config_data.get("min_tier_name")
+                else:
+                    # Old format: direct dict mapping
+                    tier_settings = tier_config_data
+                    min_tier_name = None
+            else:
+                continue
+            
+            # Get watchlist for this guild
+            watchlist_items = []
+            try:
+                watchlist_response = requests.get(
+                    f"{CONFIG['backend_url']}/api/watchlist?guild_id={guild_id}",
+                    timeout=5
+                )
+                if watchlist_response.status_code == 200:
+                    watchlist_data = watchlist_response.json()
+                    watchlist_items = [item.get("item_id") for item in watchlist_data if item.get("item_id")]
+            except Exception as e:
+                print(f"[BOT] ⚠ Error fetching watchlist for {guild.name}: {e}")
+            
+            # Get server config for channel routing
+            from utils.notification_router import get_server_config, determine_channel
+            server_config = get_server_config(guild_id)
+            
             # Filter opportunities for this guild
+            alerts_sent = 0
+            max_alerts_per_cycle = 1  # Rate limit: one alert per guild per cycle
+            
             for opp in dumps:
+                if alerts_sent >= max_alerts_per_cycle:
+                    break
+                
                 tier_name = opp.get('tier', '').lower()
-                tier_config = guild_tiers.get(tier_name)
+                tier_setting = tier_settings.get(tier_name)
                 
                 # Skip if tier not enabled or not configured
-                if not tier_config or not tier_config.get('enabled', True):
+                if not tier_setting or not tier_setting.get('enabled', True):
                     continue
                 
                 # Check min-tier restriction (if configured)
-                min_tier = guild_tiers.get('min_tier')
-                if min_tier:
+                if min_tier_name:
                     tier_order = ['iron', 'copper', 'bronze', 'silver', 'gold', 'platinum', 'ruby', 'sapphire', 'emerald', 'diamond']
                     try:
-                        min_idx = tier_order.index(min_tier.lower())
+                        min_idx = tier_order.index(min_tier_name.lower())
                         opp_idx = tier_order.index(tier_name)
                         if opp_idx < min_idx:
                             continue
                     except ValueError:
                         pass
                 
-                # Deduplication check
+                # Watchlist filtering: send if item is in watchlist OR watchlist is empty (send all above min tier)
                 item_id = opp.get('id') or opp.get('item_id')
+                if watchlist_items:  # If watchlist has items, only send alerts for watched items
+                    if item_id not in watchlist_items:
+                        continue  # Skip if not in watchlist
+                # If watchlist is empty, send all items that pass tier checks (already handled above)
+                
+                # Deduplication check
                 timestamp_bucket = int(datetime.now().timestamp() // 300) * 300  # Round to 5 minutes
                 dedupe_key = (guild_id, item_id, tier_name, timestamp_bucket)
                 
@@ -318,8 +369,6 @@ async def tiered_alerts():
                 
                 # Mark as sent
                 alert_dedupe_cache.add(dedupe_key)
-                
-                # Note: Old dedupe entries are cleaned up periodically below
                 
                 # Build embed
                 item_name = opp.get('name', 'Unknown')
@@ -335,6 +384,7 @@ async def tiered_alerts():
                 low = opp.get('low', 0)
                 max_buy_4h = opp.get('max_buy_4h', 0)
                 flags = opp.get('flags', [])
+                group = opp.get('group', 'metals')
                 
                 # Build title
                 title = f"{tier_emoji} {tier_display} Dump: {item_name}"
@@ -374,21 +424,23 @@ async def tiered_alerts():
                 if thumbnail_url:
                     embed.set_thumbnail(url=thumbnail_url)
                 
-                # Add footer
-                embed.set_footer(text=f"ID: {item_id} | Tax: 1%")
+                # Add footer with tier group
+                group_display = "Gems" if group == "gems" else "Metals"
+                embed.set_footer(text=f"ID: {item_id} | {group_display} | Tax: 1%")
                 embed.timestamp = datetime.now()
                 
                 # Get role to mention
-                role_id = tier_config.get('role_id')
+                role_id = tier_setting.get('role_id')
                 content = None
                 if role_id:
-                    role = guild.get_role(int(role_id))
-                    if role:
-                        content = role.mention
+                    try:
+                        role = guild.get_role(int(role_id))
+                        if role:
+                            content = role.mention
+                    except (ValueError, TypeError):
+                        pass  # Invalid role ID, skip mention
                 
-                # Get channel to send to (use notification router logic)
-                from utils.notification_router import get_server_config, determine_channel
-                server_config = get_server_config(guild_id)
+                # Get channel to send to
                 channel_name = determine_channel(opp, "dump", server_config)
                 
                 if channel_name:
@@ -396,18 +448,21 @@ async def tiered_alerts():
                         channel = None
                         if channel_name.isdigit():
                             channel = bot.get_channel(int(channel_name))
+                            # Verify it's in the correct guild
+                            if channel and channel.guild.id != guild.id:
+                                channel = None
                         else:
                             channel_name_clean = channel_name.replace("#", "").strip()
                             channel = discord.utils.get(guild.text_channels, name=channel_name_clean)
                         
                         if channel:
                             await channel.send(content=content, embed=embed)
+                            alerts_sent += 1
                             print(f"[BOT] ✓ Sent {tier_display} alert for {item_name} to {guild.name}")
+                    except discord.Forbidden:
+                        print(f"[BOT] ⚠ No permission to send message in {guild.name}")
                     except Exception as e:
                         print(f"[BOT] ⚠ Error sending alert to {guild.name}: {e}")
-                
-                # Rate limit: only send one alert per guild per cycle
-                break
         
         # Clean up old dedupe cache entries periodically
         if len(alert_dedupe_cache) > 10000:

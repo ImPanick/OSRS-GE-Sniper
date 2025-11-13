@@ -6,11 +6,21 @@
 - Stores snapshots in database
 - Calculates dump quality scores (0-100)
 - Maps scores to tier system (Iron → Diamond)
+
+True Dump Detection:
+A "dump" represents oversupply - large quantities sold at lower prices than usual.
+This is NOT just a price drop, but a combination of:
+- Price drop percentage (from previous period)
+- Volume spike (current volume vs expected baseline)
+- Oversupply ratio (volume traded vs GE buy limit)
+- Buy speed (trades per 5 minutes relative to limit)
 """
 import requests
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 import os
+import threading
+import time
 
 # Import database and metadata modules
 from .database import get_db_connection, db_transaction
@@ -22,6 +32,12 @@ USER_AGENT = os.getenv('OSRS_API_USER_AGENT', "OSRS-GE-Sniper/1.0 (https://githu
 HEADERS = {"User-Agent": USER_AGENT}
 FALLBACK_BASE = "https://grandexchange.tools/api"
 FALLBACK_HEADERS = {"User-Agent": USER_AGENT}
+
+# In-memory cache for opportunities (refreshed by background worker)
+_opportunities_cache: List[Dict] = []
+_cache_lock = threading.Lock()
+_cache_timestamp: float = 0.0
+CACHE_TTL = 300  # Cache expires after 5 minutes (300 seconds)
 
 # Tier definitions (canonical)
 TIERS = [
@@ -216,51 +232,76 @@ def compute_dump_score(
     buy_limit: int
 ) -> float:
     """
-    Compute dump quality score (0-100)
+    Compute dump quality score (0-100) using weighted model.
+    
+    Scoring Formula:
+    - 40% weight: Price drop percentage (how much price fell)
+    - 30% weight: Volume spike percentage (current volume vs expected baseline)
+    - 20% weight: Oversupply ratio (volume traded vs GE buy limit)
+    - 10% weight: Buy speed (trades per 5 minutes relative to limit)
     
     Args:
-        prev_low: Previous period's low price
+        prev_low: Previous period's low price (baseline for comparison)
         curr_low: Current low price
         curr_volume: Current 5-minute volume
-        avg_volume: Average 5-minute volume (baseline)
-        buy_limit: Max buy per 4h
+        avg_volume: Average volume over recent history (baseline)
+        buy_limit: Max buy per 4h (GE limit)
         
     Returns:
-        Score from 0-100
+        Score from 0-100, where:
+        - 0-10: Iron tier (minimal dump)
+        - 91-100: Diamond tier (exceptional dump opportunity)
     """
     if prev_low <= 0 or curr_low <= 0:
         return 0.0
     
-    # Calculate drop percentage
-    drop_pct = ((prev_low - curr_low) / prev_low) * 100
+    # 1. Calculate price drop percentage (40% weight)
+    # Negative drop means price increased, so clamp to 0
+    drop_pct = max(0.0, ((prev_low - curr_low) / prev_low) * 100)
     
-    # Expected 5-minute volume (baseline)
-    expected_5m = avg_volume / (24 * 12) if avg_volume > 0 else 1  # 24h * 12 (5-min periods)
+    # Normalize drop_pct to 0-40 points (40% weight)
+    # A 20% drop = 40 points (max for this component)
+    drop_score = min(drop_pct * 2.0, 40.0)
     
-    # Volume spike percentage
-    vol_spike_pct = ((curr_volume - expected_5m) / max(expected_5m, 1)) * 100
+    # 2. Calculate volume spike percentage (30% weight)
+    # Expected 5-minute volume = average volume / (24h * 12 periods per hour)
+    expected_5m = avg_volume / (24 * 12) if avg_volume > 0 else 1
     
-    # Oversupply ratio (how much volume vs buy limit)
-    oversupply_ratio = (curr_volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
+    # Volume spike: how much current volume exceeds expected
+    vol_spike_pct = max(0.0, ((curr_volume - expected_5m) / max(expected_5m, 1)) * 100)
     
-    # Buy speed (units per 5 min relative to limit)
-    buy_speed = (curr_volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
+    # Normalize vol_spike_pct to 0-30 points (30% weight)
+    # A 100% spike (double expected) = 30 points (max for this component)
+    vol_spike_score = min(vol_spike_pct * 0.3, 30.0)
     
-    # Combine into score (weighted)
-    # 40% drop_pct, 30% vol_spike_pct, 20% oversupply_ratio, 10% buy_speed
-    score = (
-        min(drop_pct * 2.5, 40) +  # Max 40 points for drop (16% drop = 40 points)
-        min(vol_spike_pct * 0.3, 30) +  # Max 30 points for volume spike
-        min(oversupply_ratio * 0.2, 20) +  # Max 20 points for oversupply
-        min(buy_speed * 0.1, 10)  # Max 10 points for buy speed
-    )
+    # 3. Calculate oversupply ratio (20% weight)
+    # How much volume traded relative to buy limit
+    # If volume = buy_limit, that's 100% oversupply in 5 minutes
+    oversupply_pct = (curr_volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
+    
+    # Normalize oversupply_pct to 0-20 points (20% weight)
+    # 100% oversupply (volume = limit) = 20 points (max for this component)
+    oversupply_score = min(oversupply_pct * 0.2, 20.0)
+    
+    # 4. Calculate buy speed (10% weight)
+    # Trades per 5 minutes relative to limit
+    # Slow buy = lower score (good for "slow buy" flag, but lower overall score)
+    # Fast buy = higher score (indicates active dumping)
+    buy_speed_pct = (curr_volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
+    
+    # Normalize buy_speed_pct to 0-10 points (10% weight)
+    # 100% buy speed (volume = limit in 5 min) = 10 points (max for this component)
+    buy_speed_score = min(buy_speed_pct * 0.1, 10.0)
+    
+    # Combine weighted components
+    total_score = drop_score + vol_spike_score + oversupply_score + buy_speed_score
     
     # Clamp to [0, 100]
-    return max(0.0, min(100.0, score))
+    return max(0.0, min(100.0, total_score))
 
 def assign_tier(score: float) -> Dict[str, str]:
     """
-    Assign tier based on score
+    Assign tier based on score.
     
     Args:
         score: Dump quality score (0-100)
@@ -281,13 +322,75 @@ def assign_tier(score: float) -> Dict[str, str]:
     # Fallback (shouldn't happen)
     return {"tier_name": "iron", "emoji": "🔩", "group": "metals"}
 
-def analyze_dumps() -> List[Dict]:
+def get_tier_by_name(tier_name: str) -> Optional[Dict]:
     """
-    Analyze current dump/flip opportunities
+    Get tier information by tier name.
+    
+    Args:
+        tier_name: Tier name (e.g., "gold", "diamond")
+        
+    Returns:
+        Dict with tier info (name, emoji, group, min, max) or None if not found
+    """
+    tier_name_lower = tier_name.lower()
+    for tier in TIERS:
+        if tier["name"].lower() == tier_name_lower:
+            return tier.copy()
+    return None
+
+def get_all_tiers() -> List[Dict]:
+    """
+    Get all tier definitions.
     
     Returns:
-        List of dicts with dump analysis for each candidate item
+        List of tier dicts with keys: name, emoji, group, min, max
     """
+    return [tier.copy() for tier in TIERS]
+
+def analyze_dumps(use_cache: bool = True) -> List[Dict]:
+    """
+    Analyze current dump/flip opportunities.
+    
+    This function detects true dumps (oversupply events) by analyzing:
+    - Price drops from previous periods
+    - Volume spikes vs expected baseline
+    - Oversupply ratios (volume vs GE buy limit)
+    - Buy speed (trades per 5 minutes)
+    
+    Uses in-memory cache to avoid recomputing on every API request.
+    Cache expires after CACHE_TTL seconds (default 5 minutes).
+    
+    Args:
+        use_cache: If True, return cached results if still valid
+        
+    Returns:
+        List of dicts with dump analysis for each candidate item.
+        Each dict includes:
+        - id (item_id): OSRS item ID
+        - name: Item name
+        - tier: Tier name ("iron", "copper", ..., "diamond")
+        - emoji: Tier emoji
+        - group: Tier group ("metals" or "gems")
+        - score: Quality score (0-100)
+        - drop_pct: Price drop percentage
+        - vol_spike_pct: Volume spike percentage
+        - oversupply_pct: Oversupply percentage (volume vs buy limit)
+        - buy_speed: Buy speed percentage (volume vs limit per 5 min)
+        - volume: Current 5-minute volume
+        - high: Current high price
+        - low: Current low price
+        - max_buy_4h: GE buy limit (max units per 4 hours)
+        - flags: List of special flags (e.g., "slow_buy", "one_gp_dump", "super")
+        - timestamp: ISO timestamp of snapshot
+    """
+    # Check cache first
+    if use_cache:
+        with _cache_lock:
+            current_time = time.time()
+            if _opportunities_cache and (current_time - _cache_timestamp) < CACHE_TTL:
+                print(f"[DUMP_ENGINE] Returning cached opportunities ({len(_opportunities_cache)} items)")
+                return _opportunities_cache.copy()
+    
     try:
         # Fetch latest snapshot
         snapshot = fetch_5m_snapshot()
@@ -300,7 +403,7 @@ def analyze_dumps() -> List[Dict]:
         for item_id_str, current_data in snapshot.items():
             item_id = int(item_id_str)
             
-            # Get item metadata
+            # Get item metadata (includes buy_limit)
             meta = get_item_meta(item_id)
             if not meta:
                 continue
@@ -308,7 +411,7 @@ def analyze_dumps() -> List[Dict]:
             buy_limit = meta.get('buy_limit', 0)
             item_name = meta.get('name', f'Item {item_id}')
             
-            # Skip items with no buy limit or invalid prices
+            # Skip items with no buy limit (untradeable or special items)
             if buy_limit == 0:
                 continue
             
@@ -316,22 +419,30 @@ def analyze_dumps() -> List[Dict]:
             high = current_data.get("high")
             volume = current_data.get("volume", 0)
             
+            # Skip items with invalid price data
             if low is None or high is None or low <= 0:
                 continue
             
             # Get recent history (last 60 minutes = 12 snapshots)
+            # This provides baseline for volume comparison
             history = get_recent_history(item_id, minutes=60)
             
+            # Need at least 2 snapshots to compare current vs previous
             if len(history) < 2:
-                continue  # Need at least 2 snapshots for comparison
+                continue
             
-            # Calculate average volume over history
+            # Calculate average volume over history (baseline)
             avg_volume = sum(h.get("volume", 0) for h in history) / len(history) if history else 0
             
             # Get previous low price (from second-to-last snapshot)
+            # This represents the "before" state for price drop calculation
             prev_low = history[-2].get("low") if len(history) >= 2 else low
             
-            # Compute dump score
+            # Skip if no price drop (not a dump)
+            if prev_low <= 0 or low >= prev_low:
+                continue
+            
+            # Compute dump quality score (0-100)
             score = compute_dump_score(
                 prev_low=prev_low,
                 curr_low=low,
@@ -340,28 +451,38 @@ def analyze_dumps() -> List[Dict]:
                 buy_limit=buy_limit
             )
             
-            # Assign tier
+            # Skip opportunities with score 0 (no dump detected)
+            if score <= 0:
+                continue
+            
+            # Assign tier based on score
             tier_info = assign_tier(score)
             
-            # Calculate metrics
+            # Calculate detailed metrics for display
             drop_pct = ((prev_low - low) / prev_low * 100) if prev_low > 0 else 0
             expected_5m = avg_volume / (24 * 12) if avg_volume > 0 else 1
-            vol_spike_pct = ((volume - expected_5m) / max(expected_5m, 1)) * 100
+            vol_spike_pct = max(0.0, ((volume - expected_5m) / max(expected_5m, 1)) * 100)
             oversupply_pct = (volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
-            buy_speed = (volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
+            buy_speed_pct = (volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
             
-            # Determine flags
+            # Determine special flags
             flags = []
-            if buy_speed < 50:  # Less than 50% of limit in 5 min
+            # Slow buy: less than 50% of limit traded in 5 minutes
+            # This indicates a gradual dump (good for slow buyers)
+            if buy_speed_pct < 50:
                 flags.append("slow_buy")
-            if low == 1:  # One GP dump
+            # One GP dump: price dropped to 1 GP (often indicates panic selling)
+            if low == 1:
                 flags.append("one_gp_dump")
-            if score >= 51:  # Platinum or higher
+            # Super tier: Platinum or higher (score >= 51)
+            # These are exceptional opportunities
+            if score >= 51:
                 flags.append("super")
             
-            # Build opportunity dict
+            # Build opportunity dict with all required fields
             opportunity = {
-                "item_id": item_id,
+                "id": item_id,  # Primary ID field
+                "item_id": item_id,  # Also include for compatibility
                 "name": item_name,
                 "tier": tier_info["tier_name"],
                 "emoji": tier_info["emoji"],
@@ -370,21 +491,30 @@ def analyze_dumps() -> List[Dict]:
                 "drop_pct": round(drop_pct, 1),
                 "vol_spike_pct": round(vol_spike_pct, 1),
                 "oversupply_pct": round(oversupply_pct, 1),
-                "buy_speed": round(buy_speed, 1),
+                "buy_speed": round(buy_speed_pct, 1),  # Percentage, not absolute speed
                 "volume": int(volume),
                 "high": int(high),
                 "low": int(low),
+                "buy": int(low),  # Alias for compatibility
+                "sell": int(high),  # Alias for compatibility
                 "flags": flags,
                 "max_buy_4h": buy_limit,
+                "limit": buy_limit,  # Legacy alias
                 "timestamp": datetime.fromtimestamp(current_data.get("timestamp", current_time)).isoformat() + "Z"
             }
             
             opportunities.append(opportunity)
         
-        # Sort by score (highest first)
+        # Sort by score (highest first) - best opportunities first
         opportunities.sort(key=lambda x: x["score"], reverse=True)
         
-        print(f"[DUMP_ENGINE] Analyzed {len(opportunities)} dump opportunities")
+        # Update cache
+        with _cache_lock:
+            global _opportunities_cache, _cache_timestamp
+            _opportunities_cache = opportunities.copy()
+            _cache_timestamp = time.time()
+        
+        print(f"[DUMP_ENGINE] Analyzed {len(opportunities)} dump opportunities (cached)")
         return opportunities
         
     except Exception as e:
@@ -395,8 +525,17 @@ def analyze_dumps() -> List[Dict]:
 
 def run_cycle():
     """
-    Run one complete cycle: fetch snapshot, record it, analyze dumps
-    This is the main entry point for the background worker
+    Run one complete cycle: fetch snapshot, record it, analyze dumps.
+    This is the main entry point for the background worker (dump_worker.py).
+    
+    The cycle:
+    1. Fetches latest 5-minute snapshot from OSRS Wiki API
+    2. Records snapshot to database (ge_prices_5m table)
+    3. Analyzes dumps and updates cache
+    4. Returns list of opportunities
+    
+    Returns:
+        List of dump opportunities (same format as analyze_dumps())
     """
     try:
         print(f"[DUMP_ENGINE] Starting cycle at {datetime.now().isoformat()}")
@@ -405,13 +544,13 @@ def run_cycle():
         snapshot = fetch_5m_snapshot()
         if not snapshot:
             print("[DUMP_ENGINE] No snapshot data available")
-            return
+            return []
         
-        # Record snapshot
+        # Record snapshot to database
         record_snapshot(snapshot)
         
-        # Analyze dumps
-        opportunities = analyze_dumps()
+        # Analyze dumps (force refresh, don't use cache)
+        opportunities = analyze_dumps(use_cache=False)
         
         print(f"[DUMP_ENGINE] Cycle complete: {len(opportunities)} opportunities found")
         return opportunities

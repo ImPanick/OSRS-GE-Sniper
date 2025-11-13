@@ -225,6 +225,20 @@ def server_config(guild_id):
             if 'enabled' in data:
                 config['enabled'] = bool(data['enabled'])
             
+            # Update tier settings if provided
+            if 'tier_settings' in data:
+                for tier_name, tier_data in data['tier_settings'].items():
+                    role_id = tier_data.get('role_id')
+                    enabled = tier_data.get('enabled', True)
+                    update_guild_tier_setting(guild_id, tier_name, role_id=role_id, enabled=enabled)
+            
+            # Update min tier for alerts
+            if 'min_tier_name' in data:
+                min_tier_name = data['min_tier_name']
+                if min_tier_name == "":
+                    min_tier_name = None
+                update_guild_config(guild_id, min_tier_name=min_tier_name)
+            
             save_config(guild_id, config)
             return jsonify({"status": "saved", "config": config})
         except Exception as e:
@@ -232,6 +246,222 @@ def server_config(guild_id):
             return jsonify({"error": "Failed to save configuration"}), 500
     
     return jsonify(config)
+
+@bp.route('/config/<guild_id>/tiers', methods=['GET'])
+@rate_limit(max_requests=30, window=60)
+def tier_config_page(guild_id):
+    """Tier configuration page for a guild"""
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Configuration interface is LAN-only."}), 403
+    
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    if is_banned(guild_id):
+        return jsonify({"error": "This server has been banned from using the sniper bot."}), 403
+    
+    from flask import render_template_string
+    
+    # Get tier configuration directly from database
+    try:
+        tiers = get_all_tiers()
+        guild_settings = get_guild_tier_settings(guild_id)
+        guild_config = get_guild_config(guild_id)
+        tiers_data = {
+            "tiers": tiers,
+            "guild_tier_settings": guild_settings,
+            "min_tier_name": guild_config.get("min_tier_name")
+        }
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch tiers: {e}")
+        tiers_data = {"tiers": [], "guild_tier_settings": {}, "min_tier_name": None}
+    
+    TIER_CONFIG_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tier Configuration - {{ guild_id }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>⚙️ Tier Configuration</h1>
+  
+  <nav>
+    <a href="/dashboard">📊 Dashboard</a>
+    <a href="/volume_tracker">📈 Volume Tracker</a>
+    <a href="/admin">🔒 Admin</a>
+  </nav>
+  
+  <div style="max-width: 1200px; margin: 0 auto; padding: 0 2rem;">
+    <div class="card" style="margin-bottom: 1rem;">
+      <h3 style="margin: 0;">Guild ID: <code style="color: var(--accent-primary); background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: var(--radius-sm);">{{ guild_id }}</code></h3>
+    </div>
+    
+    <div class="card">
+      <h2>🎯 Tier Settings</h2>
+      <p style="color: var(--text-secondary); margin-bottom: 2rem;">
+        Configure Discord role mentions for each tier and set minimum tier for automatic alerts.
+      </p>
+      
+      <div id="tier-settings-container">
+        <div style="text-align: center; padding: 2rem; color: var(--text-muted);">Loading tier settings...</div>
+      </div>
+      
+      <div style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid var(--border-color);">
+        <div class="filter-group" style="margin-bottom: 1.5rem;">
+          <label>Minimum Tier for Automatic Alerts</label>
+          <select id="min_tier_name" style="max-width: 300px;">
+            <option value="">All Tiers</option>
+            <option value="iron">Iron</option>
+            <option value="copper">Copper</option>
+            <option value="bronze">Bronze</option>
+            <option value="silver">Silver</option>
+            <option value="gold">Gold</option>
+            <option value="platinum">Platinum</option>
+            <option value="ruby">Ruby</option>
+            <option value="sapphire">Sapphire</option>
+            <option value="emerald">Emerald</option>
+            <option value="diamond">Diamond</option>
+          </select>
+          <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.5rem;">
+            Only tiers at or above this level will trigger automatic Discord alerts.
+          </p>
+        </div>
+      </div>
+      
+      <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-top: 2rem;">
+        <button onclick="saveTierSettings()" style="min-width: 200px;">💾 Save Tier Settings</button>
+        <button onclick="location.reload()" class="secondary" style="min-width: 200px;">🔄 Reset</button>
+      </div>
+      
+      <div id="save_status" style="margin-top: 1.5rem; min-height: 1.5rem; text-align: center;"></div>
+    </div>
+  </div>
+  
+  <script>
+    const guildId = '{{ guild_id }}';
+    const tiersData = {{ tiers_json|safe }};
+    
+    function loadTierSettings() {
+      renderTierSettings(tiersData);
+    }
+    
+    function renderTierSettings(data) {
+      const tiers = data.tiers || [];
+      const minTierName = data.min_tier_name || '';
+      
+      // Set min tier dropdown
+      document.getElementById('min_tier_name').value = minTierName;
+      
+      // Render tier settings
+      let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">';
+      
+      tiers.forEach(tier => {
+        const setting = data.guild_tier_settings?.[tier.name] || {};
+        const roleId = setting.role_id || '';
+        const enabled = setting.enabled !== false;
+        
+        html += `
+          <div class="card" style="padding: 1.5rem;">
+            <h3 style="margin-top: 0; margin-bottom: 1rem;">
+              ${tier.emoji} ${tier.name.charAt(0).toUpperCase() + tier.name.slice(1)}
+            </h3>
+            <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+              Score Range: ${tier.min_score} - ${tier.max_score} | Group: ${tier.group}
+            </p>
+            <div class="filter-group" style="margin-bottom: 1rem;">
+              <label>Discord Role ID</label>
+              <input type="text" 
+                     id="tier_${tier.name}_role" 
+                     placeholder="Role ID (e.g., 123456789012345678)" 
+                     value="${roleId}">
+              <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">
+                Leave empty to disable role mentions for this tier.
+              </p>
+            </div>
+            <div class="filter-group">
+              <label>
+                <input type="checkbox" 
+                       id="tier_${tier.name}_enabled" 
+                       ${enabled ? 'checked' : ''}>
+                Enable alerts for this tier
+              </label>
+            </div>
+          </div>
+        `;
+      });
+      
+      html += '</div>';
+      document.getElementById('tier-settings-container').innerHTML = html;
+    }
+    
+    async function saveTierSettings() {
+      const statusDiv = document.getElementById('save_status');
+      statusDiv.innerHTML = '<div class="loading" style="margin: 0 auto;"></div><p style="margin-top: 0.5rem; color: var(--text-muted);">Saving...</p>';
+      
+      // Collect tier settings
+      const tierSettings = {};
+      const tierInputs = document.querySelectorAll('[id^="tier_"][id$="_role"], [id^="tier_"][id$="_enabled"]');
+      
+      tierInputs.forEach(input => {
+        const match = input.id.match(/tier_(.+)_(role|enabled)/);
+        if (match) {
+          const tierName = match[1];
+          const field = match[2];
+          
+          if (!tierSettings[tierName]) {
+            tierSettings[tierName] = {};
+          }
+          
+          if (field === 'role') {
+            tierSettings[tierName].role_id = input.value.trim() || null;
+          } else if (field === 'enabled') {
+            tierSettings[tierName].enabled = input.checked;
+          }
+        }
+      });
+      
+      const minTierName = document.getElementById('min_tier_name').value.trim() || null;
+      
+      try {
+        const response = await fetch(`/config/${guildId}`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            tier_settings: tierSettings,
+            min_tier_name: minTierName
+          })
+        });
+        
+        if (response.ok) {
+          statusDiv.innerHTML = '<span style="color: var(--accent-success);">✅ Tier settings saved successfully!</span>';
+          setTimeout(() => {
+            statusDiv.innerHTML = '';
+          }, 3000);
+        } else {
+          const error = await response.json().catch(() => ({error: 'Unknown error'}));
+          statusDiv.innerHTML = `<span style="color: var(--accent-danger);">❌ Error: ${error.error || 'Failed to save settings'}</span>`;
+        }
+      } catch (error) {
+        console.error('Save error:', error);
+        statusDiv.innerHTML = `<span style="color: var(--accent-danger);">❌ Error: ${error.message}</span>`;
+      }
+    }
+    
+    // Load settings on page load
+    loadTierSettings();
+  </script>
+</body>
+</html>
+"""
+    
+    # Convert tiers_data to JSON for JavaScript
+    tiers_json = json.dumps(tiers_data)
+    
+    return render_template_string(TIER_CONFIG_TEMPLATE, guild_id=guild_id, tiers_json=tiers_json)
 
 # Setup routes
 @bp.route('/api/setup/save-token', methods=['POST'])
@@ -265,8 +495,8 @@ def setup_save_token():
         
         # Reload CONFIG from file
         with open(CONFIG_PATH, 'r') as f:
-            import utils.shared
-            utils.shared.CONFIG = json.load(f)
+            import utils.shared as shared_utils
+            shared_utils.CONFIG = json.load(f)
         
         return jsonify({"status": "saved"})
     except Exception:
@@ -279,7 +509,7 @@ def setup_test_bot():
     if not is_local_request():
         return jsonify({"error": "Setup can only be done from local network"}), 403
     
-        token = utils.shared.CONFIG.get('discord_token', '')
+    token = utils.shared.CONFIG.get('discord_token', '')
     
     if not token or token == 'YOUR_BOT_TOKEN_HERE':
         return jsonify({"error": "Bot token not configured"}), 400

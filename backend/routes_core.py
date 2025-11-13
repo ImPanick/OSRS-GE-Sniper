@@ -4,18 +4,12 @@ Core routes blueprint - index, dashboard, volume tracker, health checks
 from flask import Blueprint, jsonify, redirect, render_template_string, request
 from utils.shared import (
     get_item_lock, get_item_data, BASE, HEADERS, FALLBACK_BASE, FALLBACK_HEADERS,
-    fetch_with_fallback, convert_1h_data_to_dict, TIME_WINDOWS, needs_setup
+    fetch_with_fallback, convert_1h_data_to_dict, TIME_WINDOWS, needs_setup, item_names
 )
-import utils.shared
 from utils.database import get_db_connection, get_price_historicals
-from utils.item_metadata import get_item_meta
 from security import rate_limit
 from datetime import datetime
 import requests
-import os
-import json
-import time
-import threading
 
 # Import helper functions from background_tasks
 from background_tasks import calculate_risk_metrics, ge_tax
@@ -30,6 +24,65 @@ DASHBOARD_TEMPLATE = """
   <title>OSRS GE Sniper - Tiered Control Panel</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10/dist/htmx.min.js"></script>
+  <style>
+    .tier-filters {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      box-shadow: var(--shadow-md);
+    }
+    .filter-section {
+      margin-bottom: 1.5rem;
+    }
+    .filter-section:last-child {
+      margin-bottom: 0;
+    }
+    .filter-section h3 {
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      margin-bottom: 0.75rem;
+    }
+    .filter-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .filter-btn {
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-color);
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: var(--transition);
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    .filter-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+      transform: translateY(-2px);
+    }
+    .filter-btn.active {
+      background: rgba(0, 212, 255, 0.1);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+    }
+    .watch-btn.watching {
+      background: var(--bg-tertiary);
+      color: var(--accent-success);
+      border-color: var(--accent-success);
+      cursor: default;
+    }
+    .watch-btn.watching:hover {
+      transform: none;
+    }
+  </style>
 </head>
 <body>
   <h1>⚔️ OSRS GE Sniper - Tiered Control Panel</h1>
@@ -38,12 +91,117 @@ DASHBOARD_TEMPLATE = """
     <a href="/volume_tracker">📈 Volume Tracker</a>
     <a href="/admin">🔒 Admin</a>
   </nav>
-  <div id="dumps-table" 
-       hx-get="/api/dumps?format=html" 
-       hx-trigger="load"
-       hx-swap="innerHTML">
-    <div style="text-align: center; padding: 2rem;">Loading...</div>
+  
+  <div style="max-width: 1400px; margin: 0 auto; padding: 0 2rem;">
+    <div class="tier-filters">
+      <div class="filter-section">
+        <h3>Groups</h3>
+        <div class="filter-buttons">
+          <button class="filter-btn" onclick="filterDumps('group', 'metals')">🔩 All Metals</button>
+          <button class="filter-btn" onclick="filterDumps('group', 'gems')">💎 All Gems</button>
+        </div>
+      </div>
+      <div class="filter-section">
+        <h3>Metal Tiers</h3>
+        <div class="filter-buttons">
+          <button class="filter-btn" onclick="filterDumps('tier', 'iron')">🔩 Iron</button>
+          <button class="filter-btn" onclick="filterDumps('tier', 'copper')">🪙 Copper</button>
+          <button class="filter-btn" onclick="filterDumps('tier', 'bronze')">🏅 Bronze</button>
+          <button class="filter-btn" onclick="filterDumps('tier', 'silver')">🥈 Silver</button>
+          <button class="filter-btn" onclick="filterDumps('tier', 'gold')">🥇 Gold</button>
+          <button class="filter-btn" onclick="filterDumps('tier', 'platinum')">⚪ Platinum</button>
+        </div>
+      </div>
+      <div class="filter-section">
+        <h3>Gem Tiers</h3>
+        <div class="filter-buttons">
+          <button class="filter-btn" onclick="filterDumps('tier', 'ruby')">💎🔴 Ruby</button>
+          <button class="filter-btn" onclick="filterDumps('tier', 'sapphire')">💎🔵 Sapphire</button>
+          <button class="filter-btn" onclick="filterDumps('tier', 'emerald')">💎🟢 Emerald</button>
+          <button class="filter-btn" onclick="filterDumps('tier', 'diamond')">💎 Diamond</button>
+        </div>
+      </div>
+      <div class="filter-section">
+        <h3>Special Filters</h3>
+        <div class="filter-buttons">
+          <button class="filter-btn" onclick="filterDumps('special', 'slow_buy')">🐌 Slow Buy</button>
+          <button class="filter-btn" onclick="filterDumps('special', 'one_gp_dump')">💰 1GP Dumps</button>
+          <button class="filter-btn" onclick="filterDumps('special', 'super')">⭐ Super</button>
+          <button class="filter-btn" onclick="filterDumps('', '')">🔄 Show All</button>
+        </div>
+      </div>
+    </div>
+    
+    <div id="dumps-table" 
+         hx-get="/api/dumps?format=html" 
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="text-align: center; padding: 2rem;">Loading...</div>
+    </div>
   </div>
+  
+  <script>
+    let currentFilter = {type: '', value: ''};
+    
+    function filterDumps(type, value) {
+      currentFilter = {type: type, value: value};
+      
+      // Update active button
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      
+      // Build query string
+      let url = '/api/dumps?format=html';
+      if (type && value) {
+        if (type === 'tier') {
+          url += `&tier=${value}`;
+        } else if (type === 'group') {
+          url += `&group=${value}`;
+        } else if (type === 'special') {
+          url += `&special=${value}`;
+        }
+      }
+      
+      // Update table via HTMX
+      htmx.ajax('GET', url, {target: '#dumps-table', swap: 'innerHTML'});
+    }
+    
+    // Load watchlist on page load
+    let watchlistItems = new Set();
+    async function loadWatchlist() {
+      try {
+        const response = await fetch('/api/watchlist?guild_id=default');
+        if (response.ok) {
+          const items = await response.json();
+          watchlistItems = new Set(items.map(item => item.item_id));
+          updateWatchButtons();
+        }
+      } catch (e) {
+        console.error('Failed to load watchlist:', e);
+      }
+    }
+    
+    function updateWatchButtons() {
+      document.querySelectorAll('.watch-btn').forEach(btn => {
+        const itemId = parseInt(btn.dataset.itemId);
+        if (watchlistItems.has(itemId)) {
+          btn.textContent = 'Watching';
+          btn.classList.add('watching');
+          btn.disabled = true;
+        }
+      });
+    }
+    
+    // Load watchlist when page loads
+    loadWatchlist();
+    
+    // Listen for HTMX swaps to update watch buttons
+    document.body.addEventListener('htmx:afterSwap', function(event) {
+      if (event.detail.target.id === 'dumps-table') {
+        updateWatchButtons();
+      }
+    });
+  </script>
 </body>
 </html>
 """
@@ -189,7 +347,7 @@ def api_recent_trades():
         trades = []
         for row in rows:
             item_id, timestamp, low, high, volume = row
-            name = utils.shared.item_names.get(str(item_id), f"Item {item_id}")
+            name = item_names.get(str(item_id), f"Item {item_id}")
             trades.append({
                 "item_id": item_id,
                 "name": name,

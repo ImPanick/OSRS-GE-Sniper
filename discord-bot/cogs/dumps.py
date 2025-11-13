@@ -26,63 +26,83 @@ class Dumps(commands.Cog):
 
     @app_commands.command(name="dip", description="GOD-TIER DUMP SNIPER — BUY THE PANIC")
     async def dip(self, interaction: discord.Interaction):
-        data = requests.get(f"{CONFIG['backend_url']}/api/dumps", timeout=30).json()
-        if not data:
-            await interaction.response.send_message("Market stable. No panic. Yet.", ephemeral=True)
-            return
+        await interaction.response.defer()
+        
+        try:
+            data = requests.get(f"{CONFIG['backend_url']}/api/dumps", timeout=30).json() or []
+            if not data:
+                await interaction.followup.send("Market stable. No panic. Yet.", ephemeral=True)
+                return
 
-        # Sort by pure destruction power
-        sorted_dumps = sorted(data, key=lambda x: x.get('volume', 0) * x.get('drop_pct', 0), reverse=True)
+            # Sort by score (highest first) - new tier system
+            sorted_dumps = sorted(data, key=lambda x: x.get('score', 0), reverse=True)
 
-        embed = Embed(
-            title="DUMP DETECTED — WHALES ARE BLEEDING",
-            description="**INSTANT BUY SIGNALS** — Sorted by *Volume × Crash Intensity*",
-            color=0x8B0000  # Blood red
-        )
-
-        for item in sorted_dumps[:8]:
-            name = item['name']
-            drop = item['drop_pct']
-            price = item['buy']
-            vol = item['volume']
-            insta_buy = item.get('insta_buy', 0)
-            insta_sell = item.get('insta_sell', 0)
-            quality = item.get('quality', '')
-            label = item.get('quality_label', '')
-
-            # NUCLEAR TITLE
-            title = f"{quality} **{name}** — {drop:.1f}% CRASH"
-
-            # REAL PROFIT CALC
-            realistic_profit = price * 0.99 - item.get('cost_per_limit', price)
-            max_profit = price * 4 * 0.99  # 4h limit flip
-
-            value = (
-                f"**BUY NOW @{price:,} GP** | Vol: **{vol:,}**\n"
-                f"**Max Profit:** {max_profit/1e6:.1f}M gp | **Realistic:** {realistic_profit/1e6:.1f}M gp\n"
-                f"**Insta Buy:** {insta_buy:,} | **Insta Sell:** {insta_sell:,} (Live)\n"
-                f"**Limit:** {item.get('limit', 0):,} | **Tax:** 1%\n"
-                f"`{label}`"
+            embed = Embed(
+                title="💎 TIERED DUMP OPPORTUNITIES",
+                description="**INSTANT BUY SIGNALS** — Sorted by *Quality Score*",
+                color=0x8B0000  # Blood red
             )
 
-            embed.add_field(name=title, value=value, inline=False)
-        
-        # Set thumbnail for the first (top) dump item
-        if sorted_dumps:
-            top_item = sorted_dumps[0]
-            thumbnail_url = get_item_thumbnail_url(top_item.get('name', ''), top_item.get('id', 0))
-            if thumbnail_url:
-                embed.set_thumbnail(url=thumbnail_url)
+            for item in sorted_dumps[:8]:
+                name = item.get('name', 'Unknown')
+                tier = item.get('tier', '').capitalize()
+                emoji = item.get('emoji', '')
+                score = item.get('score', 0)
+                drop = item.get('drop_pct', 0)
+                vol_spike = item.get('vol_spike_pct', 0)
+                oversupply = item.get('oversupply_pct', 0)
+                price = item.get('low', 0) or item.get('buy', 0)
+                high = item.get('high', 0) or item.get('sell', 0)
+                vol = item.get('volume', 0)
+                max_buy_4h = item.get('max_buy_4h', 0) or item.get('limit', 0)
+                flags = item.get('flags', [])
 
-        embed.set_footer(text=
-            "QUALITY GUIDE:\n"
-            "⭐ = Good • ⭐⭐⭐ = Premium • ⭐⭐⭐⭐⭐ = GOD-TIER\n"
-            "NUCLEAR DUMP = 1.5M+ items dumped — WHALE PANIC SELLING\n"
-            "Built by the ImPanicking — Nov 10 2025"
-        )
-        embed.timestamp = interaction.created_at
+                # Build title with tier
+                title = f"{emoji} **{tier}** {name} — {drop:.1f}% DROP"
 
-        await interaction.response.send_message(embed=embed)
+                # Build value with all metrics
+                value_parts = [
+                    f"**Score:** {score:.1f} | **Tier:** {tier}",
+                    f"**Drop %:** {drop:.1f}% | **Vol Spike %:** {vol_spike:.1f}% | **Oversupply %:** {oversupply:.1f}%",
+                    f"**Buy / Sell:** {price:,} / {high:,} GP",
+                    f"**Volume:** {vol:,} | **Max Buy / 4h:** {max_buy_4h:,}",
+                ]
+                
+                # Add flags
+                if flags:
+                    flag_labels = []
+                    if 'slow_buy' in flags:
+                        flag_labels.append("Slow Buy")
+                    if 'one_gp_dump' in flags:
+                        flag_labels.append("1GP")
+                    if 'super' in flags:
+                        flag_labels.append("Super")
+                    if flag_labels:
+                        value_parts.append(f"**Flags:** {', '.join(flag_labels)}")
+
+                value = "\n".join(value_parts)
+                embed.add_field(name=title, value=value, inline=False)
+            
+            # Set thumbnail for the first (top) dump item
+            if sorted_dumps:
+                top_item = sorted_dumps[0]
+                thumbnail_url = get_item_thumbnail_url(top_item.get('name', ''), top_item.get('id', 0) or top_item.get('item_id', 0))
+                if thumbnail_url:
+                    embed.set_thumbnail(url=thumbnail_url)
+
+            embed.set_footer(text=
+                "TIER GUIDE:\n"
+                "🔩 Iron (0-10) • 🪙 Copper (11-20) • 🏅 Bronze (21-30) • 🥈 Silver (31-40) • 🥇 Gold (41-50)\n"
+                "⚪ Platinum (51-60) • 💎🔴 Ruby (61-70) • 💎🔵 Sapphire (71-80) • 💎🟢 Emerald (81-90) • 💎 Diamond (91-100)"
+            )
+            embed.timestamp = interaction.created_at
+
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            print(f"[ERROR] /dip command failed: {e}")
+            import traceback
+            traceback.print_exc()
+            await interaction.followup.send(f"Error fetching dumps: {str(e)}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Dumps(bot))
