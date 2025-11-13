@@ -33,6 +33,13 @@ intents.message_content = True
 intents.members = True  # Required for role mentions and member access
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
+# Tier configuration cache: guild_id -> {tier_name -> {role_id, enabled, group, min_score, max_score, emoji}}
+tier_configs = {}
+
+# Deduplication cache: (guild_id, item_id, tier, timestamp_bucket) -> sent
+# timestamp_bucket is rounded to nearest 5 minutes to prevent spam
+alert_dedupe_cache = set()
+
 async def collect_server_info(guild):
     """Collect server information (roles, members, channels, etc.)"""
     try:
@@ -127,7 +134,7 @@ async def collect_server_info(guild):
 @bot.event
 async def on_ready():
     print(f"{bot.user} ONLINE")
-    for filename in ["flips", "dumps", "spikes", "watchlist", "stats", "config", "nightly"]:
+    for filename in ["flips", "dumps", "spikes", "watchlist", "stats", "config", "nightly", "item_lookup"]:
         await bot.load_extension(f"cogs.{filename}")
     
     # Auto-register all existing servers
@@ -150,6 +157,8 @@ async def on_ready():
     poll_alerts.start()
     update_server_info.start()
     process_role_assignments.start()
+    load_tier_configs.start()
+    tiered_alerts.start()
 
 @bot.event
 async def on_guild_join(guild):
@@ -218,114 +227,139 @@ async def process_role_assignments():
     except Exception as e:
         print(f"[ERROR] process_role_assignments: {e}")
 
-@tasks.loop(seconds=20)
-async def poll_alerts():
-    """Poll backend and route notifications to per-server channels"""
+@tasks.loop(seconds=300)  # Update tier configs every 5 minutes
+async def load_tier_configs():
+    """Load tier configurations for all guilds"""
     try:
-        # Get latest data
+        for guild in bot.guilds:
+            guild_id = str(guild.id)
+            try:
+                response = requests.get(
+                    f"{CONFIG['backend_url']}/api/tiers?guild_id={guild_id}",
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    tier_configs[guild_id] = response.json()
+                    print(f"[BOT] ✓ Loaded tier config for {guild.name} ({guild_id})")
+                else:
+                    print(f"[BOT] ⚠ Failed to load tier config for {guild.name}: HTTP {response.status_code}")
+            except Exception as e:
+                print(f"[BOT] ⚠ Error loading tier config for {guild.name}: {e}")
+    except Exception as e:
+        print(f"[ERROR] load_tier_configs: {e}")
+
+@load_tier_configs.before_loop
+async def before_load_tier_configs():
+    """Load tier configs immediately on startup"""
+    await bot.wait_until_ready()
+    # Run once immediately
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        try:
+            response = requests.get(
+                f"{CONFIG['backend_url']}/api/tiers?guild_id={guild_id}",
+                timeout=5
+            )
+            if response.status_code == 200:
+                tier_configs[guild_id] = response.json()
+                print(f"[BOT] ✓ Loaded tier config for {guild.name} ({guild_id})")
+        except Exception as e:
+            print(f"[BOT] ⚠ Error loading tier config for {guild.name}: {e}")
+
+@tasks.loop(seconds=30)  # Check for tiered alerts every 30 seconds
+async def tiered_alerts():
+    """Tiered alert loop using new dump engine"""
+    try:
+        # Get latest dump opportunities from new engine
         dumps = requests.get(f"{CONFIG['backend_url']}/api/dumps", timeout=30).json() or []
-        spikes = requests.get(f"{CONFIG['backend_url']}/api/spikes", timeout=30).json() or []
-        flips = requests.get(f"{CONFIG['backend_url']}/api/top", timeout=30).json() or []
         
-        # Import router
-        from utils.notification_router import broadcast_to_all_servers
+        if not dumps:
+            return
         
-        # Broadcast dumps
-        if dumps:
-            from utils.item_utils import get_item_thumbnail_url, get_item_wiki_url
+        from utils.item_utils import get_item_thumbnail_url, get_item_wiki_url
+        
+        # Process each guild
+        for guild in bot.guilds:
+            guild_id = str(guild.id)
             
-            def dump_embed(item):
-                item_name = item.get('name', 'Unknown')
-                item_id = item.get('id', 0)
-                thumbnail_url = get_item_thumbnail_url(item_name, item_id)
+            # Get tier config for this guild
+            guild_tiers = tier_configs.get(guild_id, {})
+            if not guild_tiers:
+                continue  # Skip if no tier config loaded
+            
+            # Filter opportunities for this guild
+            for opp in dumps:
+                tier_name = opp.get('tier', '').lower()
+                tier_config = guild_tiers.get(tier_name)
                 
-                buy_price = item.get('buy', 0)
-                sell_price = item.get('sell', buy_price)
-                insta_buy = item.get('insta_buy', buy_price)
-                insta_sell = item.get('insta_sell', sell_price)
-                volume = item.get('volume', 0)
-                limit = item.get('limit', 0)
-                drop_pct = item.get('drop_pct', 0)
-                quality = item.get('quality', '')
-                quality_label = item.get('quality_label', '')
-                realistic_profit = item.get('realistic_profit', 0)
-                cost_per_limit = item.get('cost_per_limit', 0)
-                profit_per_item = sell_price - buy_price
-                profit_pct = (profit_per_item / buy_price * 100) if buy_price > 0 else 0
+                # Skip if tier not enabled or not configured
+                if not tier_config or not tier_config.get('enabled', True):
+                    continue
                 
-                # Risk metrics
-                risk_score = item.get('risk_score', 0)
-                risk_level = item.get('risk_level', 'UNKNOWN')
-                profitability_confidence = item.get('profitability_confidence', 0)
-                liquidity_score = item.get('liquidity_score', 0)
+                # Check min-tier restriction (if configured)
+                min_tier = guild_tiers.get('min_tier')
+                if min_tier:
+                    tier_order = ['iron', 'copper', 'bronze', 'silver', 'gold', 'platinum', 'ruby', 'sapphire', 'emerald', 'diamond']
+                    try:
+                        min_idx = tier_order.index(min_tier.lower())
+                        opp_idx = tier_order.index(tier_name)
+                        if opp_idx < min_idx:
+                            continue
+                    except ValueError:
+                        pass
                 
-                # Price historicals
-                avg_7d = item.get('avg_7d')
-                avg_24h = item.get('avg_24h')
-                avg_12h = item.get('avg_12h')
-                avg_6h = item.get('avg_6h')
-                avg_1h = item.get('avg_1h')
-                prev_price = item.get('prev_price')
-                prev_timestamp = item.get('prev_timestamp')
+                # Deduplication check
+                item_id = opp.get('id') or opp.get('item_id')
+                timestamp_bucket = int(datetime.now().timestamp() // 300) * 300  # Round to 5 minutes
+                dedupe_key = (guild_id, item_id, tier_name, timestamp_bucket)
                 
-                # Build title with quality indicator
-                title = f"✔ Dump Detected: {item_name}"
-                if quality:
-                    title = f"{quality} {title}"
+                if dedupe_key in alert_dedupe_cache:
+                    continue  # Already sent this alert
                 
-                # Build description with all details
+                # Mark as sent
+                alert_dedupe_cache.add(dedupe_key)
+                
+                # Note: Old dedupe entries are cleaned up periodically below
+                
+                # Build embed
+                item_name = opp.get('name', 'Unknown')
+                item_id = item_id or opp.get('item_id', 0)
+                tier_emoji = opp.get('emoji', '')
+                tier_display = tier_name.capitalize()
+                score = opp.get('score', 0)
+                drop_pct = opp.get('drop_pct', 0)
+                vol_spike_pct = opp.get('vol_spike_pct', 0)
+                oversupply_pct = opp.get('oversupply_pct', 0)
+                volume = opp.get('volume', 0)
+                high = opp.get('high', 0)
+                low = opp.get('low', 0)
+                max_buy_4h = opp.get('max_buy_4h', 0)
+                flags = opp.get('flags', [])
+                
+                # Build title
+                title = f"{tier_emoji} {tier_display} Dump: {item_name}"
+                
+                # Build description
                 description_parts = []
+                description_parts.append(f"**Tier:** {tier_display} (Score: {score:.1f})")
+                description_parts.append(f"**Drop %:** {drop_pct:.1f}%")
+                description_parts.append(f"**Volume Spike %:** {vol_spike_pct:.1f}%")
+                description_parts.append(f"**Oversupply %:** {oversupply_pct:.1f}%")
+                description_parts.append(f"**Volume:** {volume:,}")
+                description_parts.append(f"**High / Low:** {high:,} / {low:,}")
+                description_parts.append(f"**Max Buy / 4h:** {max_buy_4h:,}")
                 
-                # Quality label
-                if quality_label:
-                    description_parts.append(f"**{quality_label}**")
+                # Add flags
+                flag_labels = []
+                if 'slow_buy' in flags:
+                    flag_labels.append("Slow Buy")
+                if 'one_gp_dump' in flags:
+                    flag_labels.append("1GP")
+                if 'super' in flags:
+                    flag_labels.append("Super")
                 
-                # Volume and limit info
-                if volume and limit:
-                    description_parts.append(f"**IB/IS Volume:** {volume:,}/{volume:,} | **Limit:** {limit:,}")
-                
-                # Realistic profit
-                if realistic_profit:
-                    description_parts.append(f"💰 **Realistic Profit:** {realistic_profit:,} gp Sell @ {sell_price:,} gp")
-                
-                # Price historicals section
-                historicals_list = []
-                if avg_7d:
-                    historicals_list.append(f"**7d:** {avg_7d:,} gp")
-                if avg_24h:
-                    historicals_list.append(f"**24h:** {avg_24h:,} gp")
-                if avg_12h:
-                    historicals_list.append(f"**12h:** {avg_12h:,} gp")
-                if avg_6h:
-                    historicals_list.append(f"**6h:** {avg_6h:,} gp")
-                if avg_1h:
-                    historicals_list.append(f"**1h:** {avg_1h:,} gp")
-                if prev_price and prev_timestamp:
-                    hours_ago = (datetime.now().timestamp() - prev_timestamp) / 3600
-                    historicals_list.append(f"**Prev:** {prev_price:,} gp ({hours_ago:.1f} hours ago)")
-                
-                if historicals_list:
-                    description_parts.append("📉 **Price History:**\n" + "\n".join(historicals_list))
-                
-                # Instant buy/sell prices
-                insta_info = []
-                if insta_buy and insta_buy != buy_price:
-                    insta_info.append(f"**Insta Buy:** {insta_buy:,}")
-                if insta_sell and insta_sell != sell_price:
-                    insta_info.append(f"**Insta Sell:** {insta_sell:,}")
-                
-                if insta_info:
-                    description_parts.append("⚡ " + " | ".join(insta_info))
-                
-                # Cost and profit per item
-                if cost_per_limit:
-                    description_parts.append(f"💰 **Cost per limit:** {cost_per_limit:,} gp")
-                
-                if profit_per_item > 0:
-                    description_parts.append(f"✔ **Profit per item:** +{profit_per_item:,} gp ({profit_pct:.2f}%)")
-                
-                # Risk and confidence
-                description_parts.append(f"⚠️ **Risk:** {risk_level} ({risk_score:.1f}/100) | **Confidence:** {profitability_confidence:.1f}% | **Liquidity:** {liquidity_score:.1f}%")
+                if flag_labels:
+                    description_parts.append(f"**Flags:** {', '.join(flag_labels)}")
                 
                 # Create embed
                 embed = discord.Embed(
@@ -335,22 +369,67 @@ async def poll_alerts():
                     url=get_item_wiki_url(item_id)
                 )
                 
-                # Add thumbnail (top-right in Discord)
+                # Add thumbnail
+                thumbnail_url = get_item_thumbnail_url(item_name, item_id)
                 if thumbnail_url:
                     embed.set_thumbnail(url=thumbnail_url)
                 
-                # Add footer with metadata
-                footer_text = f"ID: {item_id}"
-                if item.get('version'):
-                    footer_text += f" | v{item.get('version')}"
-                footer_text += " | Tax: 1%"
-                embed.set_footer(text=footer_text)
-                
-                # Add timestamp
+                # Add footer
+                embed.set_footer(text=f"ID: {item_id} | Tax: 1%")
                 embed.timestamp = datetime.now()
                 
-                return embed
-            await broadcast_to_all_servers(bot, dumps, "dump", dump_embed)
+                # Get role to mention
+                role_id = tier_config.get('role_id')
+                content = None
+                if role_id:
+                    role = guild.get_role(int(role_id))
+                    if role:
+                        content = role.mention
+                
+                # Get channel to send to (use notification router logic)
+                from utils.notification_router import get_server_config, determine_channel
+                server_config = get_server_config(guild_id)
+                channel_name = determine_channel(opp, "dump", server_config)
+                
+                if channel_name:
+                    try:
+                        channel = None
+                        if channel_name.isdigit():
+                            channel = bot.get_channel(int(channel_name))
+                        else:
+                            channel_name_clean = channel_name.replace("#", "").strip()
+                            channel = discord.utils.get(guild.text_channels, name=channel_name_clean)
+                        
+                        if channel:
+                            await channel.send(content=content, embed=embed)
+                            print(f"[BOT] ✓ Sent {tier_display} alert for {item_name} to {guild.name}")
+                    except Exception as e:
+                        print(f"[BOT] ⚠ Error sending alert to {guild.name}: {e}")
+                
+                # Rate limit: only send one alert per guild per cycle
+                break
+        
+        # Clean up old dedupe cache entries periodically
+        if len(alert_dedupe_cache) > 10000:
+            # Keep only recent entries (last hour)
+            current_time = int(datetime.now().timestamp())
+            old_keys = [k for k in alert_dedupe_cache if k[3] < current_time - 3600]
+            for k in old_keys:
+                alert_dedupe_cache.discard(k)
+        
+    except Exception as e:
+        print(f"[ERROR] tiered_alerts: {e}")
+        import traceback
+        traceback.print_exc()
+
+@tasks.loop(seconds=20)
+async def poll_alerts():
+    """Legacy poll alerts for spikes and flips (kept for compatibility)"""
+    try:
+        spikes = requests.get(f"{CONFIG['backend_url']}/api/spikes", timeout=30).json() or []
+        
+        # Import router
+        from utils.notification_router import broadcast_to_all_servers
         
         # Broadcast spikes
         if spikes:

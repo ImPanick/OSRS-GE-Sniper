@@ -3,14 +3,17 @@ import requests
 import time
 import json
 import threading
+import sqlite3
 from datetime import datetime
-from flask import Flask, jsonify, request, redirect
+from flask import Flask, jsonify, request, redirect, render_template_string
 from flask_cors import CORS
 from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
 import os
 import urllib.parse
-from utils.database import log_price, get_price_historicals, init_db, get_db_connection
+from utils.database import log_price, get_price_historicals, init_db, get_db_connection, get_recent_history
+from utils.item_metadata import get_item_meta, get_buy_limit
+from utils.recipe_data import get_recipe, get_decant_set
 import secrets
 from security import (
     sanitize_guild_id, sanitize_channel_id, sanitize_webhook_url, sanitize_token,
@@ -28,8 +31,9 @@ BASE = "https://prices.runescape.wiki/api/v1/osrs"
 # Fallback API
 FALLBACK_BASE = "https://grandexchange.tools/api"
 # Improved User-Agent as required by API documentation
-HEADERS = {"User-Agent": "OSRS-GE-Sniper/1.0 (https://github.com/your-repo; contact@example.com)"}
-FALLBACK_HEADERS = {"User-Agent": "OSRS-GE-Sniper/1.0 (fallback)"}
+USER_AGENT = os.getenv('OSRS_API_USER_AGENT', "OSRS-GE-Sniper/1.0 (https://github.com/ImPanick/OSRS-GE-Sniper; contact@example.com)")
+HEADERS = {"User-Agent": USER_AGENT}
+FALLBACK_HEADERS = {"User-Agent": USER_AGENT}
 
 # Load config with fallback paths for Docker and local development
 CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))
@@ -167,6 +171,422 @@ def get_dump_quality(drop_pct, volume, low_price):
         return "DEAL", "WORTH A LOOK"
     else:
         return "", ""
+
+def get_item_tier(item_name):
+    """
+    Determine item tier based on name
+    Returns: (tier_name, emoji) or (None, None)
+    """
+    name_lower = item_name.lower()
+    
+    # Metal tiers
+    if 'iron' in name_lower and 'bar' in name_lower:
+        return 'iron', '⚙️'
+    if 'bronze' in name_lower and 'bar' in name_lower:
+        return 'bronze', '🥉'
+    if 'copper' in name_lower:
+        return 'copper', '🟤'
+    if 'silver' in name_lower and 'bar' in name_lower:
+        return 'silver', '🥈'
+    if 'gold' in name_lower and 'bar' in name_lower:
+        return 'gold', '🥇'
+    if 'platinum' in name_lower:
+        return 'platinum', '💎'
+    
+    # Gem tiers
+    if 'ruby' in name_lower:
+        return 'ruby', '💎'
+    if 'sapphire' in name_lower:
+        return 'sapphire', '💠'
+    if 'emerald' in name_lower:
+        return 'emerald', '💚'
+    if 'diamond' in name_lower:
+        return 'diamond', '💠'
+    
+    return None, None
+
+def get_item_group(item_name):
+    """
+    Determine item group (metals, gems, etc.)
+    Returns: group_name or None
+    """
+    name_lower = item_name.lower()
+    
+    # Metals
+    metals = ['iron', 'bronze', 'copper', 'silver', 'gold', 'platinum', 'steel', 'mithril', 'adamant', 'rune', 'bar']
+    if any(metal in name_lower for metal in metals):
+        return 'metals'
+    
+    # Gems
+    gems = ['diamond', 'ruby', 'emerald', 'sapphire', 'opal', 'jade', 'topaz', 'dragonstone']
+    if any(gem in name_lower for gem in gems):
+        return 'gems'
+    
+    return None
+
+# HTML template for dashboard page
+DASHBOARD_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSRS GE Sniper - Tiered Control Panel</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10/dist/htmx.min.js"></script>
+  <style>
+    .dashboard-layout {
+      display: flex;
+      gap: 2rem;
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    .sidebar {
+      width: 280px;
+      flex-shrink: 0;
+    }
+    .sidebar h3 {
+      margin-bottom: 1rem;
+      color: var(--accent-primary);
+      font-size: 1.1rem;
+    }
+    .filter-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      box-shadow: var(--shadow-md);
+    }
+    .filter-btn {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: var(--transition);
+      text-align: left;
+      font-weight: 500;
+    }
+    .filter-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+      transform: translateX(4px);
+    }
+    .filter-btn.active {
+      background: rgba(0, 212, 255, 0.1);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+    }
+    .main-content {
+      flex: 1;
+      min-width: 0;
+    }
+    #dumps-table {
+      min-height: 400px;
+    }
+    .watch-btn.watching {
+      background: var(--accent-success);
+      color: var(--bg-primary);
+      cursor: default;
+    }
+    .watch-btn.watching:hover {
+      transform: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>⚔️ OSRS GE Sniper - Tiered Control Panel</h1>
+  
+  <nav>
+    <a href="/dashboard" class="active">📊 Dashboard</a>
+    <a href="/volume_tracker">📈 Volume Tracker</a>
+    <a href="/admin">🔒 Admin</a>
+  </nav>
+
+  <div class="dashboard-layout">
+    <aside class="sidebar">
+      <h3>Filters</h3>
+      <div class="filter-grid">
+        <button 
+          class="filter-btn active"
+          hx-get="/api/dumps?format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          All Dumps
+        </button>
+        
+        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">Groups</h4>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?group=metals&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          All Metals
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?group=gems&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          All Gems
+        </button>
+        
+        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">Metal Tiers</h4>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=iron&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          ⚙️ Iron
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=bronze&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          🥉 Bronze
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=copper&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          🟤 Copper
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=silver&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          🥈 Silver
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=gold&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          🥇 Gold
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=platinum&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          💎 Platinum
+        </button>
+        
+        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">Gem Tiers</h4>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=ruby&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          💎 Ruby
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=sapphire&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          💠 Sapphire
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=emerald&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          💚 Emerald
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?tier=diamond&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          💠 Diamond
+        </button>
+        
+        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">Special</h4>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?special=slow_buy&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          Slow Buy
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?special=one_gp_dump&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          1GP Dumps
+        </button>
+        <button 
+          class="filter-btn"
+          hx-get="/api/dumps?special=super&format=html"
+          hx-target="#dumps-table"
+          hx-swap="innerHTML"
+          onclick="document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
+          Super
+        </button>
+      </div>
+    </aside>
+    
+    <main class="main-content">
+      <div id="dumps-table" 
+           hx-get="/api/dumps?format=html" 
+           hx-trigger="load"
+           hx-swap="innerHTML">
+        <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+          Loading dump opportunities...
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <footer>
+    <p>Auto-refreshes every 10 seconds • Last updated: <span id="lastUpdate"></span></p>
+  </footer>
+
+  <script>
+    // Update last update time
+    function updateTime() {
+      const now = new Date();
+      document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+    }
+    updateTime();
+    setInterval(updateTime, 1000);
+
+    // Auto-refresh table every 10 seconds
+    setInterval(() => {
+      const activeBtn = document.querySelector('.filter-btn.active');
+      if (activeBtn && activeBtn.getAttribute('hx-get')) {
+        htmx.trigger(activeBtn, 'click');
+      } else {
+        htmx.trigger('#dumps-table', 'load');
+      }
+    }, 10000);
+
+    // Handle watch button success
+    document.body.addEventListener('htmx:afterSwap', function(event) {
+      if (event.detail.target.classList.contains('watch-btn')) {
+        event.detail.target.textContent = 'Watching';
+        event.detail.target.classList.add('watching');
+        event.detail.target.disabled = true;
+      }
+    });
+  </script>
+</body>
+</html>
+"""
+
+# HTML template for dumps table (used by HTMX)
+DUMPS_TABLE_TEMPLATE = """
+<div class="table-container">
+  <table>
+    <thead>
+      <tr>
+        <th>Tier</th>
+        <th>Item Name</th>
+        <th>Score</th>
+        <th>Drop %</th>
+        <th>Volume Spike %</th>
+        <th>Oversupply %</th>
+        <th>Max Buy / 4h</th>
+        <th>High / Low</th>
+        <th>Flags</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if dumps %}
+        {% for dump in dumps %}
+        <tr>
+          <td>
+            {% if dump.tier_emoji and dump.tier %}
+              {{ dump.tier_emoji }} {{ dump.tier|title }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            <a href="https://prices.runescape.wiki/osrs/item/{{ dump.id }}" target="_blank" style="color: var(--accent-primary); text-decoration: none;">
+              {{ dump.name }}
+            </a>
+          </td>
+          <td>{{ dump.quality or '—' }}</td>
+          <td class="dump">-{{ "%.1f"|format(dump.drop_pct) }}%</td>
+          <td>{{ "%.1f"|format((dump.volume / dump.prev * 100) if dump.prev and dump.prev > 0 else 0) }}%</td>
+          <td>{{ "%.1f"|format((dump.volume / dump.limit * 100) if dump.limit and dump.limit > 0 else 0) }}%</td>
+          <td>{{ "{:,}".format(dump.max_buy_4h) if dump.max_buy_4h else "—" }}</td>
+          <td>
+            <span class="price-buy">{{ "{:,}".format(dump.buy) }}</span> / 
+            <span class="price-sell">{{ "{:,}".format(dump.sell) }}</span>
+          </td>
+          <td>
+            {% if dump.quality %}
+              <span class="status-badge {{ 'danger' if 'NUCLEAR' in dump.quality or 'GOD-TIER' in dump.quality else 'warning' if 'ELITE' in dump.quality else 'success' }}">
+                {{ dump.quality }}
+              </span>
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            <button 
+              class="btn secondary watch-btn" 
+              data-item-id="{{ dump.id }}"
+              data-item-name="{{ dump.name }}"
+              onclick="
+                fetch('/api/watchlist/add', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({guild_id: 'default', item_id: {{ dump.id }}, item_name: '{{ dump.name|e }}'})
+                }).then(r => r.json()).then(data => {
+                  if (data.success) {
+                    this.textContent = 'Watching';
+                    this.classList.add('watching');
+                    this.disabled = true;
+                  }
+                });
+                return false;
+              ">
+              Watch
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+            No dump opportunities found
+          </td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+"""
 
 def load_names():
     """Load item names from cache with proper error handling"""
@@ -653,6 +1073,12 @@ def index():
     # Redirect to Next.js frontend
     return redirect('http://localhost:3000')
 
+@app.route('/dashboard')
+@rate_limit(max_requests=100, window=60)
+def dashboard():
+    """Tiered control panel dashboard with HTMX filters"""
+    return render_template_string(DASHBOARD_TEMPLATE)
+
 @app.route('/api/setup/status', methods=['GET'])
 @rate_limit(max_requests=30, window=60)
 def setup_status():
@@ -679,9 +1105,130 @@ def api_top():
 @app.route('/api/dumps')
 @rate_limit(max_requests=200, window=60)
 def api_dumps():
-    """Get dumps with thread-safe access"""
+    """
+    Get dump opportunities using new dump engine with tier system
+    Query params:
+    - tier: iron, copper, bronze, silver, gold, platinum, ruby, sapphire, emerald, diamond
+    - group: metals, gems (filters by item group)
+    - special: slow_buy, one_gp_dump, super (filters by special type)
+    - limit: max number of results
+    - format: json (default) or html (for HTMX)
+    """
+    tier = request.args.get('tier', '').lower()
+    group = request.args.get('group', '').lower()
+    special = request.args.get('special', '').lower()
+    limit = request.args.get('limit', type=int)
+    response_format = request.args.get('format', 'json').lower()
+    
+    try:
+        # Use new dump engine
+        from utils.dump_engine import analyze_dumps
+        opportunities_raw = analyze_dumps()
+        
+        opportunities = []
+        for opp in opportunities_raw:
+            # Filter by tier
+            if tier and opp.get('tier', '').lower() != tier:
+                continue
+            
+            # Filter by group
+            if group and opp.get('group', '').lower() != group:
+                continue
+            
+            # Filter by special type
+            if special:
+                flags = opp.get('flags', [])
+                if special == 'slow_buy' and 'slow_buy' not in flags:
+                    continue
+                elif special == 'one_gp_dump' and 'one_gp_dump' not in flags:
+                    continue
+                elif special == 'super' and 'super' not in flags:
+                    continue
+            
+            # Format opportunity for API response
+            formatted_opp = {
+                'id': opp.get('item_id'),
+                'name': opp.get('name'),
+                'tier': opp.get('tier'),
+                'emoji': opp.get('emoji'),
+                'tier_emoji': opp.get('emoji'),  # For compatibility
+                'group': opp.get('group'),
+                'score': opp.get('score'),
+                'drop_pct': opp.get('drop_pct'),
+                'vol_spike_pct': opp.get('vol_spike_pct'),
+                'oversupply_pct': opp.get('oversupply_pct'),
+                'volume': opp.get('volume'),
+                'high': opp.get('high'),
+                'low': opp.get('low'),
+                'buy': opp.get('low'),  # For compatibility
+                'sell': opp.get('high'),  # For compatibility
+                'flags': opp.get('flags', []),
+                'max_buy_4h': opp.get('max_buy_4h', 0),
+                'limit': opp.get('max_buy_4h', 0),  # For compatibility
+                'timestamp': opp.get('timestamp')
+            }
+            
+            opportunities.append(formatted_opp)
+        
+        # Apply limit if specified
+        if limit and limit > 0:
+            opportunities = opportunities[:limit]
+        
+        # Return HTML for HTMX if requested
+        if response_format == 'html':
+            # Fallback to old format for HTML rendering
+            from flask import render_template_string
+            try:
+                return render_template_string(DUMPS_TABLE_TEMPLATE, dumps=opportunities)
+            except:
+                pass
+        
+        return jsonify(opportunities)
+        
+    except Exception as e:
+        print(f"[ERROR] api_dumps failed with new engine: {e}")
+        import traceback
+        traceback.print_exc()
+        # Fallback to old system if new engine fails
+        with _item_lock:
+            opportunities = []
+            for dump in dump_items:
+                max_buy_4h = get_buy_limit(dump.get('id', 0))
+                dump_with_limit = {**dump, 'max_buy_4h': max_buy_4h}
+                opportunities.append(dump_with_limit)
+            
+            if limit and limit > 0:
+                opportunities = opportunities[:limit]
+            
+            if response_format == 'html':
+                try:
+                    from flask import render_template_string
+                    return render_template_string(DUMPS_TABLE_TEMPLATE, dumps=opportunities)
+                except:
+                    pass
+            
+            return jsonify(opportunities)
+
+@app.route('/api/dumps/<int:item_id>')
+@rate_limit(max_requests=200, window=60)
+def api_dumps_item(item_id):
+    """Get dump opportunity for specific item with recent history"""
     with _item_lock:
-        return jsonify(dump_items)
+        # Find opportunity for this item
+        opportunity = None
+        for dump in dump_items:
+            if dump.get('id') == item_id:
+                max_buy_4h = get_buy_limit(item_id)
+                opportunity = {**dump, 'max_buy_4h': max_buy_4h}
+                break
+        
+        # Get recent 5-minute history
+        recent_history = get_recent_history(item_id, minutes=5)
+        
+        return jsonify({
+            'opportunity': opportunity,
+            'recent_history': recent_history
+        })
 
 @app.route('/api/spikes')
 @rate_limit(max_requests=200, window=60)
@@ -689,6 +1236,620 @@ def api_spikes():
     """Get spikes with thread-safe access"""
     with _item_lock:
         return jsonify(spike_items)
+
+@app.route('/api/tiers')
+@rate_limit(max_requests=100, window=60)
+def api_tiers():
+    """
+    Get tier configuration for a guild
+    Query params:
+    - guild_id: Discord guild ID (required)
+    
+    Returns tier configuration with role mappings
+    """
+    guild_id = sanitize_guild_id(request.args.get('guild_id', ''))
+    if not guild_id:
+        return jsonify({"error": "Missing required parameter: guild_id"}), 400
+    
+    config = get_config(guild_id)
+    
+    # Extract tier configuration from server config
+    # Default tier structure based on dump_engine.py tiers
+    tiers_config = config.get("tiers", {})
+    
+    # If no tier config exists, return default structure
+    if not tiers_config:
+        from utils.dump_engine import TIERS
+        default_tiers = {}
+        for tier in TIERS:
+            default_tiers[tier["name"]] = {
+                "role_id": None,
+                "enabled": True,
+                "group": tier["group"],
+                "min_score": tier["min"],
+                "max_score": tier["max"],
+                "emoji": tier["emoji"]
+            }
+        return jsonify(default_tiers)
+    
+    return jsonify(tiers_config)
+
+@app.route('/api/item/<int:item_id>')
+@app.route('/api/item/search')
+@rate_limit(max_requests=200, window=60)
+def api_item(item_id=None):
+    """
+    Get item information by ID or search by name
+    Query params:
+    - q: Search query (item name fragment) - used when item_id not provided
+    - item_id: Item ID (path parameter)
+    
+    Returns item details including max_buy_4h
+    """
+    # Handle search query
+    if item_id is None:
+        query = request.args.get('q', '').strip()
+        if not query:
+            return jsonify({"error": "Missing query parameter 'q' or item_id"}), 400
+        
+        # Search for item by name
+        with _item_lock:
+            matching_items = []
+            query_lower = query.lower()
+            
+            # Try to find exact match first
+            for item in all_items:
+                if item.get('name', '').lower() == query_lower:
+                    matching_items = [item]
+                    break
+                elif query_lower in item.get('name', '').lower():
+                    matching_items.append(item)
+            
+            # If no match in all_items, try metadata cache
+            if not matching_items:
+                from utils.item_metadata import _metadata_cache
+                for cached_id, meta in _metadata_cache.items():
+                    if query_lower in meta.get('name', '').lower():
+                        # Build item dict from cache
+                        item_data = {
+                            'id': cached_id,
+                            'name': meta.get('name', ''),
+                            'limit': meta.get('buy_limit', 0)
+                        }
+                        # Try to get current prices
+                        latest_data = {}
+                        try:
+                            latest, _ = fetch_with_fallback(
+                                f"{BASE}/latest",
+                                HEADERS,
+                                f"{FALLBACK_BASE}/latest" if FALLBACK_BASE else None,
+                                FALLBACK_HEADERS if FALLBACK_BASE else None,
+                                timeout=10
+                            )
+                            latest_data = latest.get("data", {}).get(str(cached_id), {})
+                        except:
+                            pass
+                        
+                        item_data.update({
+                            'buy': latest_data.get('low'),
+                            'sell': latest_data.get('high'),
+                            'volume': 0
+                        })
+                        matching_items.append(item_data)
+                        if len(matching_items) >= 5:  # Limit results
+                            break
+            
+            if not matching_items:
+                return jsonify({"error": f"No items found matching '{query}'"}), 404
+            
+            # Return first match or list of matches
+            if len(matching_items) == 1:
+                item = matching_items[0]
+            else:
+                # Return list of matches
+                return jsonify({
+                    "matches": matching_items[:10],
+                    "count": len(matching_items)
+                })
+    
+    # Handle item ID lookup
+    else:
+        # Get item from all_items or metadata
+        item = None
+        with _item_lock:
+            for i in all_items:
+                if i.get('id') == item_id:
+                    item = i
+                    break
+        
+        if not item:
+            # Try metadata cache
+            from utils.item_metadata import get_item_meta
+            meta = get_item_meta(item_id)
+            if not meta:
+                return jsonify({"error": f"Item {item_id} not found"}), 404
+            
+            # Build item dict
+            item = {
+                'id': item_id,
+                'name': meta.get('name', ''),
+                'limit': meta.get('buy_limit', 0)
+            }
+            
+            # Get current prices
+            try:
+                latest, _ = fetch_with_fallback(
+                    f"{BASE}/latest",
+                    HEADERS,
+                    f"{FALLBACK_BASE}/latest" if FALLBACK_BASE else None,
+                    FALLBACK_HEADERS if FALLBACK_BASE else None,
+                    timeout=10
+                )
+                latest_data = latest.get("data", {}).get(str(item_id), {})
+                item.update({
+                    'buy': latest_data.get('low'),
+                    'sell': latest_data.get('high'),
+                    'volume': 0
+                })
+            except:
+                pass
+    
+    # Add max_buy_4h (buy limit)
+    max_buy_4h = get_buy_limit(item.get('id', 0))
+    item['max_buy_4h'] = max_buy_4h
+    
+    # Check if there's a current dump opportunity
+    opportunity = None
+    with _item_lock:
+        for dump in dump_items:
+            if dump.get('id') == item.get('id'):
+                opportunity = dump
+                break
+    
+    # Also check new dump engine
+    try:
+        from utils.dump_engine import analyze_dumps
+        opportunities = analyze_dumps()
+        for opp in opportunities:
+            if opp.get('item_id') == item.get('id'):
+                opportunity = {
+                    'tier': opp.get('tier'),
+                    'score': opp.get('score'),
+                    'drop_pct': opp.get('drop_pct'),
+                    'emoji': opp.get('emoji')
+                }
+                break
+    except:
+        pass
+    
+    result = {
+        'id': item.get('id'),
+        'name': item.get('name'),
+        'buy': item.get('buy'),
+        'sell': item.get('sell'),
+        'high': item.get('sell'),
+        'low': item.get('buy'),
+        'volume': item.get('volume', 0),
+        'max_buy_4h': max_buy_4h,
+        'limit': max_buy_4h
+    }
+    
+    if opportunity:
+        result['opportunity'] = opportunity
+    
+    return jsonify(result)
+
+# Recipe and Decant API endpoints
+@app.route('/api/recipe', methods=['GET'])
+@rate_limit(max_requests=200, window=60)
+def api_recipe():
+    """Get recipe information with current prices"""
+    name = request.args.get('name', '').strip()
+    
+    if not name:
+        return jsonify({"error": "Missing required parameter: name"}), 400
+    
+    try:
+        recipe = get_recipe(name)
+        if not recipe:
+            return jsonify({"error": f"Recipe not found for: {name}"}), 404
+        
+        product_id = recipe['product_id']
+        ingredients = recipe['ingredients']
+        
+        # Fetch latest prices
+        try:
+            latest, _ = fetch_with_fallback(
+                f"{BASE}/latest",
+                HEADERS,
+                f"{FALLBACK_BASE}/latest" if FALLBACK_BASE else None,
+                FALLBACK_HEADERS if FALLBACK_BASE else None,
+                timeout=10
+            )
+            price_data = latest.get("data", {})
+        except Exception as e:
+            print(f"[WARN] Failed to fetch prices for recipe: {e}")
+            price_data = {}
+        
+        # Get product info
+        product_meta = get_item_meta(product_id)
+        product_price_data = price_data.get(str(product_id), {})
+        product_low = product_price_data.get("low")
+        product_high = product_price_data.get("high")
+        product_max_buy_4h = product_meta.get('buy_limit', 0) if product_meta else 0
+        
+        product_info = {
+            "id": product_id,
+            "name": product_meta.get('name', f'Item {product_id}') if product_meta else f'Item {product_id}',
+            "low": product_low,
+            "high": product_high,
+            "max_buy_4h": product_max_buy_4h
+        }
+        
+        # Get ingredient info
+        ingredient_list = []
+        total_ingredient_cost_low = 0
+        total_ingredient_cost_high = 0
+        
+        for ing in ingredients:
+            ing_id = ing['id']
+            ing_meta = get_item_meta(ing_id)
+            ing_price_data = price_data.get(str(ing_id), {})
+            ing_low = ing_price_data.get("low")
+            ing_high = ing_price_data.get("high")
+            ing_max_buy_4h = ing_meta.get('buy_limit', 0) if ing_meta else 0
+            
+            if ing_low:
+                total_ingredient_cost_low += ing_low
+            if ing_high:
+                total_ingredient_cost_high += ing_high
+            
+            ingredient_list.append({
+                "id": ing_id,
+                "name": ing['name'],
+                "low": ing_low,
+                "high": ing_high,
+                "max_buy_4h": ing_max_buy_4h
+            })
+        
+        # Calculate spread info
+        spread_info = {}
+        if product_low and product_high and total_ingredient_cost_low:
+            # Profit if buying ingredients low and selling product high
+            profit_low_high = product_high - total_ingredient_cost_low
+            # Profit if buying ingredients high and selling product low
+            profit_high_low = product_low - total_ingredient_cost_high
+            
+            spread_info = {
+                "total_ingredient_cost_low": total_ingredient_cost_low,
+                "total_ingredient_cost_high": total_ingredient_cost_high,
+                "product_low": product_low,
+                "product_high": product_high,
+                "profit_low_high": profit_low_high,
+                "profit_high_low": profit_high_low,
+                "spread": product_high - product_low if product_high and product_low else None
+            }
+        
+        return jsonify({
+            "product": product_info,
+            "ingredients": ingredient_list,
+            "spread_info": spread_info
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] api_recipe: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/decant', methods=['GET'])
+@rate_limit(max_requests=200, window=60)
+def api_decant():
+    """Get decant information for a potion base name"""
+    name = request.args.get('name', '').strip()
+    
+    if not name:
+        return jsonify({"error": "Missing required parameter: name"}), 400
+    
+    try:
+        decant_set = get_decant_set(name)
+        if not decant_set:
+            return jsonify({"error": f"Decant set not found for: {name}"}), 404
+        
+        # Fetch latest prices
+        try:
+            latest, _ = fetch_with_fallback(
+                f"{BASE}/latest",
+                HEADERS,
+                f"{FALLBACK_BASE}/latest" if FALLBACK_BASE else None,
+                FALLBACK_HEADERS if FALLBACK_BASE else None,
+                timeout=10
+            )
+            price_data = latest.get("data", {})
+        except Exception as e:
+            print(f"[WARN] Failed to fetch prices for decant: {e}")
+            price_data = {}
+        
+        # Build dose list with prices
+        dose_list = []
+        for dose_item in decant_set:
+            dose_id = dose_item['id']
+            dose_meta = get_item_meta(dose_id)
+            dose_price_data = price_data.get(str(dose_id), {})
+            dose_low = dose_price_data.get("low")
+            dose_high = dose_price_data.get("high")
+            dose_max_buy_4h = dose_meta.get('buy_limit', 0) if dose_meta else 0
+            
+            dose_list.append({
+                "id": dose_id,
+                "name": dose_item['name'],
+                "low": dose_low,
+                "high": dose_high,
+                "max_buy_4h": dose_max_buy_4h
+            })
+        
+        return jsonify(dose_list)
+        
+    except Exception as e:
+        print(f"[ERROR] api_decant: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# Watchlist API endpoints
+@app.route('/api/watchlist/add', methods=['POST'])
+@rate_limit(max_requests=100, window=60)
+@validate_json_payload(max_size=1000)
+def api_watchlist_add():
+    """Add item to watchlist"""
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        guild_id = sanitize_guild_id(data.get('guild_id', ''))
+        user_id = data.get('user_id')  # Optional, can be None
+        item_id = data.get('item_id')
+        item_name = data.get('item_name', '')
+        
+        if not guild_id or not item_id:
+            return jsonify({"error": "Missing required fields: guild_id, item_id"}), 400
+        
+        # Get item name if not provided
+        if not item_name:
+            item_meta = get_item_meta(item_id)
+            if item_meta:
+                item_name = item_meta.get('name', f'Item {item_id}')
+            else:
+                item_name = f'Item {item_id}'
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        
+        # Insert or ignore (if already exists)
+        try:
+            c.execute("""
+                INSERT OR IGNORE INTO watchlists (guild_id, user_id, item_id, item_name)
+                VALUES (?, ?, ?, ?)
+            """, (guild_id, user_id, item_id, item_name))
+            conn.commit()
+            
+            return jsonify({
+                "success": True,
+                "message": "Item added to watchlist"
+            })
+        except sqlite3.Error as e:
+            conn.rollback()
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
+            
+    except Exception as e:
+        print(f"[ERROR] api_watchlist_add: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/watchlist/remove', methods=['POST'])
+@rate_limit(max_requests=100, window=60)
+@validate_json_payload(max_size=1000)
+def api_watchlist_remove():
+    """Remove item from watchlist"""
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        guild_id = sanitize_guild_id(data.get('guild_id', ''))
+        user_id = data.get('user_id')  # Optional
+        item_id = data.get('item_id')
+        
+        if not guild_id or not item_id:
+            return jsonify({"error": "Missing required fields: guild_id, item_id"}), 400
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        
+        # Remove matching entry
+        if user_id:
+            c.execute("""
+                DELETE FROM watchlists
+                WHERE guild_id = ? AND user_id = ? AND item_id = ?
+            """, (guild_id, user_id, item_id))
+        else:
+            c.execute("""
+                DELETE FROM watchlists
+                WHERE guild_id = ? AND user_id IS NULL AND item_id = ?
+            """, (guild_id, item_id))
+        
+        conn.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": "Item removed from watchlist"
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] api_watchlist_remove: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/watchlist', methods=['GET'])
+@rate_limit(max_requests=200, window=60)
+def api_watchlist_get():
+    """Get watchlist items for a guild (optionally filtered by user)"""
+    try:
+        guild_id = sanitize_guild_id(request.args.get('guild_id', ''))
+        user_id = request.args.get('user_id')
+        
+        if not guild_id:
+            return jsonify({"error": "Missing required parameter: guild_id"}), 400
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        
+        # Query watchlist
+        if user_id:
+            c.execute("""
+                SELECT item_id, item_name
+                FROM watchlists
+                WHERE guild_id = ? AND user_id = ?
+                ORDER BY item_name
+            """, (guild_id, user_id))
+        else:
+            c.execute("""
+                SELECT item_id, item_name
+                FROM watchlists
+                WHERE guild_id = ?
+                ORDER BY item_name
+            """, (guild_id,))
+        
+        rows = c.fetchall()
+        watchlist = [
+            {
+                "item_id": row[0],
+                "item_name": row[1]
+            }
+            for row in rows
+        ]
+        
+        return jsonify(watchlist)
+        
+    except Exception as e:
+        print(f"[ERROR] api_watchlist_get: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Item lookup API endpoints
+@app.route('/api/item/<int:item_id>', methods=['GET'])
+@rate_limit(max_requests=200, window=60)
+def api_item_get(item_id):
+    """Get item information including metadata, prices, and current opportunity"""
+    try:
+        # Get item metadata
+        item_meta = get_item_meta(item_id)
+        if not item_meta:
+            return jsonify({"error": "Item not found"}), 404
+        
+        max_buy_4h = item_meta.get('buy_limit', 0)
+        item_name = item_meta.get('name', f'Item {item_id}')
+        
+        # Get latest price data
+        try:
+            latest, _ = fetch_with_fallback(
+                f"{BASE}/latest",
+                HEADERS,
+                f"{FALLBACK_BASE}/latest" if FALLBACK_BASE else None,
+                FALLBACK_HEADERS if FALLBACK_BASE else None,
+                timeout=10
+            )
+            
+            price_data = latest.get("data", {}).get(str(item_id), {})
+            low = price_data.get("low")
+            high = price_data.get("high")
+            insta_buy = price_data.get("high", low)  # Instant buy = high price
+            insta_sell = price_data.get("low", high)  # Instant sell = low price
+            
+            # Get 1h volume
+            h1_raw, _ = fetch_with_fallback(
+                f"{BASE}/1h",
+                HEADERS,
+                None,
+                None,
+                timeout=10
+            )
+            h1 = convert_1h_data_to_dict(h1_raw)
+            volume = h1.get(str(item_id), {}).get("volume", 0) or 0
+            
+        except Exception as e:
+            print(f"[WARN] Failed to fetch price data for item {item_id}: {e}")
+            low = None
+            high = None
+            insta_buy = None
+            insta_sell = None
+            volume = 0
+        
+        # Get price historicals
+        historicals = get_price_historicals(item_id)
+        
+        # Check for current dump opportunity
+        opportunity = None
+        with _item_lock:
+            for dump in dump_items:
+                if dump.get('id') == item_id:
+                    opportunity = {**dump, 'max_buy_4h': max_buy_4h}
+                    break
+        
+        # Build response
+        result = {
+            "id": item_id,
+            "name": item_name,
+            "max_buy_4h": max_buy_4h,
+            "low": low,
+            "high": high,
+            "insta_buy": insta_buy,
+            "insta_sell": insta_sell,
+            "volume": volume,
+            "opportunity": opportunity,
+            **historicals
+        }
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"[ERROR] api_item_get: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/item/search', methods=['GET'])
+@rate_limit(max_requests=200, window=60)
+def api_item_search():
+    """Search for items by name fragment"""
+    query = request.args.get('q', '').strip().lower()
+    
+    if not query or len(query) < 2:
+        return jsonify({"error": "Query must be at least 2 characters"}), 400
+    
+    try:
+        # Search in item_names cache
+        matches = []
+        with _item_lock:
+            for item_id_str, name in item_names.items():
+                if query in name.lower():
+                    item_id = int(item_id_str)
+                    max_buy_4h = get_buy_limit(item_id)
+                    matches.append({
+                        "id": item_id,
+                        "name": name,
+                        "max_buy_4h": max_buy_4h
+                    })
+                    # Limit results
+                    if len(matches) >= 50:
+                        break
+        
+        # Sort by name
+        matches.sort(key=lambda x: x['name'])
+        
+        return jsonify(matches)
+        
+    except Exception as e:
+        print(f"[ERROR] api_item_search: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/all_items')
 @rate_limit(max_requests=100, window=60)
@@ -1509,6 +2670,167 @@ def admin_delete_server(guild_id):
     from config_manager import delete_config
     delete_config(guild_id)
     return jsonify({"status": "deleted", "guild_id": guild_id})
+
+# Tier management admin routes
+@app.route('/admin/tiers', methods=['GET'])
+@require_admin_key()
+@rate_limit(max_requests=30, window=60)
+def admin_get_tiers():
+    """Get all tiers with optional guild-specific settings"""
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    guild_id = request.args.get('guild_id')
+    if guild_id:
+        guild_id = sanitize_guild_id(guild_id)
+        if not guild_id:
+            return jsonify({"error": "Invalid server ID"}), 400
+    
+    try:
+        tiers = get_all_tiers()
+        guild_settings = {}
+        guild_config = {}
+        
+        if guild_id:
+            guild_settings = get_guild_tier_settings(guild_id)
+            guild_config = get_guild_config(guild_id)
+        
+        # Merge tier data with guild settings
+        result = []
+        for tier in tiers:
+            tier_data = {
+                "id": tier["id"],
+                "name": tier["name"],
+                "emoji": tier["emoji"],
+                "min_score": tier["min_score"],
+                "max_score": tier["max_score"],
+                "group": tier["group"]
+            }
+            
+            if guild_id:
+                setting = guild_settings.get(tier["name"], {})
+                tier_data["role_id"] = setting.get("role_id")
+                tier_data["enabled"] = setting.get("enabled", True)
+            
+            result.append(tier_data)
+        
+        response = {
+            "tiers": result,
+            "guild_id": guild_id
+        }
+        
+        if guild_id:
+            response["min_tier_name"] = guild_config.get("min_tier_name")
+        
+        return jsonify(response)
+    except Exception as e:
+        print(f"[ERROR] admin_get_tiers: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to get tiers"}), 500
+
+@app.route('/admin/tiers', methods=['POST'])
+@require_admin_key()
+@rate_limit(max_requests=20, window=60)
+def admin_update_tiers():
+    """Update tier score ranges and guild tier settings"""
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        guild_id = data.get('guild_id')
+        if guild_id:
+            guild_id = sanitize_guild_id(guild_id)
+            if not guild_id:
+                return jsonify({"error": "Invalid server ID"}), 400
+        
+        # Update tier score ranges
+        tier_updates = data.get('tiers', [])
+        for tier_update in tier_updates:
+            tier_id = tier_update.get('id')
+            min_score = tier_update.get('min_score')
+            max_score = tier_update.get('max_score')
+            
+            if tier_id is not None:
+                if min_score is not None or max_score is not None:
+                    update_tier(tier_id, min_score, max_score)
+        
+        # Update guild tier settings
+        if guild_id:
+            guild_tier_settings = data.get('guild_tier_settings', [])
+            for setting in guild_tier_settings:
+                tier_name = setting.get('tier_name')
+                role_id = setting.get('role_id')
+                enabled = setting.get('enabled')
+                
+                if tier_name:
+                    # Allow empty string to clear role_id
+                    if role_id == "":
+                        role_id = None
+                    update_guild_tier_setting(guild_id, tier_name, role_id=role_id, enabled=enabled)
+            
+            # Update guild config (min_tier_name)
+            min_tier_name = data.get('min_tier_name')
+            if min_tier_name is not None:
+                if min_tier_name == "":
+                    min_tier_name = None
+                update_guild_config(guild_id, min_tier_name=min_tier_name)
+        
+        return jsonify({"status": "updated"})
+    except Exception as e:
+        print(f"[ERROR] admin_update_tiers: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to update tiers"}), 500
+
+# API endpoint for Discord bot
+@app.route('/api/tiers', methods=['GET'])
+@rate_limit(max_requests=100, window=60)
+def api_get_tiers():
+    """API endpoint for Discord bot to get tier configuration for a guild"""
+    guild_id = request.args.get('guild_id')
+    if not guild_id:
+        return jsonify({"error": "Missing guild_id parameter"}), 400
+    
+    # Sanitize guild_id
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    try:
+        tiers = get_all_tiers()
+        guild_settings = get_guild_tier_settings(guild_id)
+        guild_config = get_guild_config(guild_id)
+        
+        # Build response with tier list and guild-specific settings
+        tier_list = []
+        for tier in tiers:
+            setting = guild_settings.get(tier["name"], {})
+            tier_list.append({
+                "name": tier["name"],
+                "emoji": tier["emoji"],
+                "min_score": tier["min_score"],
+                "max_score": tier["max_score"],
+                "group": tier["group"],
+                "role_id": setting.get("role_id"),
+                "enabled": setting.get("enabled", True)
+            })
+        
+        response = {
+            "tiers": tier_list,
+            "min_tier_name": guild_config.get("min_tier_name")
+        }
+        
+        return jsonify(response)
+    except Exception as e:
+        print(f"[ERROR] api_get_tiers: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to get tiers"}), 500
 
 # Admin panel now handled by Next.js frontend at /admin
 
