@@ -31,6 +31,8 @@ export interface Item {
   roi: number
   volume: number
   limit: number
+  high?: number
+  low?: number
   risk_score?: number
   risk_level?: string
   profitability_confidence?: number

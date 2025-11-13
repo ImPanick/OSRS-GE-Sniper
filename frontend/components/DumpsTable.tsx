@@ -23,8 +23,8 @@ export function DumpsTable({ dumps, watchedItemIds = new Set(), onWatchToggle, g
     if (!sortKey || !sortDirection) return dumps
 
     return [...dumps].sort((a, b) => {
-      let aVal: any = a[sortKey]
-      let bVal: any = b[sortKey]
+      let aVal: any = (a as any)[sortKey]
+      let bVal: any = (b as any)[sortKey]
 
       // Handle string sorting
       if (typeof aVal === 'string') {

@@ -21,7 +21,7 @@ export default function WatchlistPage() {
       // Fetch dump data for all watched items
       if (items.length > 0) {
         const allDumps = await apiClient.getDumps()
-        const watchedIds = new Set(items.map((item: any) => item.item_id))
+        const watchedIds = new Set<number>(items.map((item: { item_id: number; item_name: string }) => item.item_id))
         const watchedDumps = allDumps.filter((dump) => watchedIds.has(dump.id))
         setDumps(watchedDumps)
       } else {
@@ -50,7 +50,7 @@ export default function WatchlistPage() {
     }
   }
 
-  const watchedItemIds = new Set(watchlist.map((item) => item.item_id))
+  const watchedItemIds = new Set<number>(watchlist.map((item) => item.item_id))
 
   return (
     <div className="space-y-6">

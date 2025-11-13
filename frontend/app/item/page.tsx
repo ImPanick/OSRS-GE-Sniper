@@ -221,7 +221,7 @@ export default function ItemPage() {
                   <div>
                     <div className="text-xs text-dark-400 mb-1">Tier</div>
                     <div className="text-sm font-semibold text-white">
-                      {item.opportunity.emoji} {item.opportunity.tier?.charAt(0).toUpperCase() + item.opportunity.tier?.slice(1)}
+                      {item.opportunity.emoji} {item.opportunity.tier ? item.opportunity.tier.charAt(0).toUpperCase() + item.opportunity.tier.slice(1) : '—'}
                     </div>
                   </div>
                   <div>

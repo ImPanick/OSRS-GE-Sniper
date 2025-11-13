@@ -68,7 +68,7 @@ export default function LegalPage() {
               <li><strong className="text-white">Automation/Botting:</strong> Do not use this tool or any automation to interact with the game client or perform automated actions in-game.</li>
               <li><strong className="text-white">Macroing:</strong> Do not use macros, scripts, or any third-party software to automate gameplay.</li>
               <li><strong className="text-white">Real Money Trading (RMT):</strong> Do not use this tool to facilitate or engage in real money trading of in-game items or currency.</li>
-              <li><strong className="text-white">Violation of Terms of Service:</strong> Any use of this tool that violates Jagex's Terms of Service or Rules of Conduct is strictly prohibited.</li>
+              <li><strong className="text-white">Violation of Terms of Service:</strong> Any use of this tool that violates Jagex&apos;s Terms of Service or Rules of Conduct is strictly prohibited.</li>
             </ul>
           </div>
           <p className="text-sm text-dark-400 italic">
@@ -83,7 +83,7 @@ export default function LegalPage() {
       >
         <div className="space-y-4 text-dark-300">
           <p>
-            This tool is provided <strong className="text-white">"AS IS"</strong>, without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and noninfringement.
+            This tool is provided <strong className="text-white">&quot;AS IS&quot;</strong>, without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and noninfringement.
           </p>
           <p>
             <strong className="text-white">You assume all responsibility</strong> for any consequences resulting from the use of this tool, including but not limited to:

@@ -30,7 +30,7 @@ export default function DashboardPage() {
     const fetchWatchlist = async () => {
       try {
         const watchlist = await apiClient.getWatchlist(guildId)
-        const ids = new Set(watchlist.map((item: any) => item.item_id))
+        const ids = new Set<number>(watchlist.map((item: { item_id: number; item_name: string }) => item.item_id))
         setWatchedItemIds(ids)
       } catch (error) {
         console.error('Failed to fetch watchlist:', error)
