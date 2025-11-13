@@ -195,7 +195,6 @@ async def process_role_assignments():
     try:
         for guild in bot.guilds:
             guild_id = str(guild.id)
-            assignment_path = os.path.join("server_configs", f"{guild_id}_assignments.json")
             
             # Try to find assignment file (it's in backend, but we'll check via API)
             try:
@@ -222,8 +221,9 @@ async def process_role_assignments():
                             print(f"[BOT] ⚠ No permission to manage roles in {guild.name}")
                         except Exception as e:
                             print(f"[BOT] ⚠ Error processing role assignment: {e}")
-            except Exception:
-                pass  # Assignment file doesn't exist or API call failed
+            except (requests.RequestException, ValueError, KeyError) as e:
+                # Assignment file doesn't exist or API call failed
+                pass
     except Exception as e:
         print(f"[ERROR] process_role_assignments: {e}")
 

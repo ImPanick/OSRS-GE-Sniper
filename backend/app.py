@@ -11,7 +11,11 @@ from discord_webhook import DiscordWebhook
 from config_manager import get_config, save_config, is_banned, ban_server, unban_server, list_servers
 import os
 import urllib.parse
-from utils.database import log_price, get_price_historicals, init_db, get_db_connection, get_recent_history
+from utils.database import (
+    log_price, get_price_historicals, init_db, get_db_connection, get_recent_history,
+    get_all_tiers, get_guild_tier_settings, get_guild_config,
+    update_tier, update_guild_tier_setting, update_guild_config
+)
 from utils.item_metadata import get_item_meta, get_buy_limit
 from utils.recipe_data import get_recipe, get_decant_set
 import secrets
@@ -913,7 +917,6 @@ def notify(title, items, color):
             if avg_1h:
                 historicals_text += f"1h: {avg_1h:,} GP"
             if prev_price:
-                from datetime import datetime
                 if prev_timestamp:
                     hours_ago = (datetime.now().timestamp() - prev_timestamp) / 3600
                     historicals_text += f"\nPrev: {prev_price:,} GP ({hours_ago:.1f} hours ago)"
@@ -1177,11 +1180,10 @@ def api_dumps():
         # Return HTML for HTMX if requested
         if response_format == 'html':
             # Fallback to old format for HTML rendering
-            from flask import render_template_string
             try:
                 return render_template_string(DUMPS_TABLE_TEMPLATE, dumps=opportunities)
-            except:
-                pass
+            except (KeyError, ValueError, TypeError) as e:
+                print(f"[ERROR] Failed to render template: {e}")
         
         return jsonify(opportunities)
         
@@ -1202,10 +1204,9 @@ def api_dumps():
             
             if response_format == 'html':
                 try:
-                    from flask import render_template_string
                     return render_template_string(DUMPS_TABLE_TEMPLATE, dumps=opportunities)
-                except:
-                    pass
+                except (KeyError, ValueError, TypeError) as e:
+                    print(f"[ERROR] Failed to render template: {e}")
             
             return jsonify(opportunities)
 
@@ -1327,8 +1328,8 @@ def api_item(item_id=None):
                                 timeout=10
                             )
                             latest_data = latest.get("data", {}).get(str(cached_id), {})
-                        except:
-                            pass
+                        except (KeyError, ValueError, requests.RequestException) as e:
+                            print(f"[ERROR] Failed to fetch latest prices for cached item {cached_id}: {e}")
                         
                         item_data.update({
                             'buy': latest_data.get('low'),
@@ -1364,7 +1365,6 @@ def api_item(item_id=None):
         
         if not item:
             # Try metadata cache
-            from utils.item_metadata import get_item_meta
             meta = get_item_meta(item_id)
             if not meta:
                 return jsonify({"error": f"Item {item_id} not found"}), 404
@@ -1391,8 +1391,8 @@ def api_item(item_id=None):
                     'sell': latest_data.get('high'),
                     'volume': 0
                 })
-            except:
-                pass
+            except (KeyError, ValueError, requests.RequestException) as e:
+                print(f"[ERROR] Failed to fetch latest prices for item {item_id}: {e}")
     
     # Add max_buy_4h (buy limit)
     max_buy_4h = get_buy_limit(item.get('id', 0))
@@ -1419,8 +1419,8 @@ def api_item(item_id=None):
                     'emoji': opp.get('emoji')
                 }
                 break
-    except:
-        pass
+    except (KeyError, ValueError, AttributeError) as e:
+        print(f"[ERROR] Failed to process opportunity for item {item_id}: {e}")
     
     result = {
         'id': item.get('id'),
@@ -2059,7 +2059,6 @@ def api_nightly():
             avg_24h = historicals.get('avg_24h')
             avg_12h = historicals.get('avg_12h')
             avg_6h = historicals.get('avg_6h')
-            avg_1h = historicals.get('avg_1h')
             
             # Skip if we don't have enough historical data
             if not avg_24h or not avg_12h:
@@ -2911,7 +2910,12 @@ def _start_background_tasks():
 _start_background_tasks()
 
 if __name__ == '__main__':
-    # Note: host='0.0.0.0' is required for Docker container networking
-    # In production, ensure proper firewall/network security
-    # This is safe when running in Docker with proper network isolation
+    # SECURITY NOTE: host='0.0.0.0' binds to all interfaces
+    # This is REQUIRED for Docker container networking to work properly
+    # Security is ensured through:
+    # 1. Docker network isolation (containers only accessible via exposed ports)
+    # 2. Firewall rules (only port 5000 should be exposed if needed)
+    # 3. Rate limiting on all endpoints (see security.py)
+    # 4. Admin key authentication for sensitive endpoints
+    # DO NOT change this unless you understand Docker networking implications
     app.run(host='0.0.0.0', port=5000)
