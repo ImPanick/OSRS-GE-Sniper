@@ -4,7 +4,18 @@ import requests
 import json
 import os
 import asyncio
+import base64
 from datetime import datetime
+
+# Try to import cryptography for token decryption
+try:
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    CRYPTOGRAPHY_AVAILABLE = False
+    print("[BOT] WARNING: cryptography not available, tokens must be stored in plaintext")
 
 # Load config with fallback paths for Docker and local development
 CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))
@@ -19,8 +30,53 @@ print(f"[BOT] Config file exists: {os.path.exists(CONFIG_PATH)}")
 with open(CONFIG_PATH, 'r') as f:
     CONFIG = json.load(f)
 
-# Validate token exists and show first/last few chars for debugging (don't log full token)
-token = CONFIG.get('discord_token', '').strip()
+def decrypt_token(encrypted_token: str) -> str:
+    """
+    Decrypt Discord bot token if encrypted, otherwise return as-is.
+    Uses the same encryption key derivation as backend.
+    """
+    if not encrypted_token:
+        return None
+    
+    if not CRYPTOGRAPHY_AVAILABLE:
+        # Fallback: return as-is (assume plain token)
+        return encrypted_token
+    
+    # Check if token appears to be encrypted (base64-encoded Fernet token)
+    try:
+        # Try to decode as base64 first
+        decoded = base64.urlsafe_b64decode(encrypted_token.encode())
+        
+        # If it's a valid Fernet token (starts with Fernet header), decrypt it
+        if decoded.startswith(b'gAAAAA'):  # Fernet tokens start with this
+            # Get encryption key from config or derive from admin_key
+            admin_key = CONFIG.get('admin_key', '')
+            if not admin_key:
+                print("[BOT] WARNING: No admin_key found, cannot decrypt token")
+                return encrypted_token
+            
+            # Derive key using same method as backend
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=b'osrs_ge_sniper_salt',
+                iterations=100000,
+            )
+            key = base64.urlsafe_b64encode(kdf.derive(admin_key.encode()))
+            
+            fernet = Fernet(key)
+            decrypted = fernet.decrypt(decoded)
+            return decrypted.decode()
+    except Exception as e:
+        # Not encrypted or decryption failed, return as-is (plain token)
+        pass
+    
+    # Return as-is if it doesn't appear to be encrypted
+    return encrypted_token
+
+# Decrypt token if encrypted
+encrypted_token = CONFIG.get('discord_token', '').strip()
+token = decrypt_token(encrypted_token) if encrypted_token else ''
 if token:
     token_preview = f"{token[:10]}...{token[-10:]}" if len(token) > 20 else "***"
     print(f"[BOT] Token found: {token_preview} (length: {len(token)})")
@@ -598,8 +654,8 @@ async def poll_alerts():
     except Exception as e:
         print(f"[ERROR] poll_alerts: {e}")
 
-# Ensure token is stripped of any whitespace
-token = CONFIG.get("discord_token", "").strip()
+# Ensure token is stripped of any whitespace (already decrypted above)
+token = token.strip() if token else ""
 if not token:
     print("[BOT] ERROR: discord_token is missing or empty in config.json")
     print("[BOT] Please check your config.json file and ensure discord_token is set")

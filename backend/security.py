@@ -3,11 +3,21 @@
 Security utilities for input validation, sanitization, and rate limiting
 """
 import re
-import hashlib
 import time
+import os
+import base64
 from functools import wraps
 from flask import request, jsonify
 from collections import defaultdict
+
+# Try to import cryptography, fallback to plaintext if not available
+try:
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    CRYPTOGRAPHY_AVAILABLE = False
 
 # Rate limiting storage (in-memory, resets on restart)
 _rate_limit_store = defaultdict(list)
@@ -257,4 +267,118 @@ def safe_path_join(base: str, *paths: str) -> str:
         return None
     
     return result
+
+def _get_encryption_key(admin_key: str = None, save_if_new: bool = False) -> bytes:
+    """
+    Generate or retrieve encryption key for token encryption.
+    Stores key in config file for persistence.
+    """
+    if not CRYPTOGRAPHY_AVAILABLE:
+        return None
+    
+    import json
+    CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))
+    if not os.path.exists(CONFIG_PATH):
+        CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
+    if not os.path.exists(CONFIG_PATH):
+        CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+    
+    # Try to get existing encryption key from config
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f:
+                config = json.load(f)
+                stored_key = config.get('_encryption_key')
+                if stored_key:
+                    return base64.urlsafe_b64decode(stored_key.encode())
+    except Exception:
+        pass
+    
+    # Generate new key - prefer deriving from admin_key for consistency
+    if admin_key:
+        # Use PBKDF2 to derive key from admin_key for consistency
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=b'osrs_ge_sniper_salt',  # Fixed salt for consistency
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(admin_key.encode()))
+    else:
+        # Generate new random key if no admin_key available
+        key = Fernet.generate_key()
+    
+    # Save key to config if requested
+    if save_if_new:
+        try:
+            config = {}
+            if os.path.exists(CONFIG_PATH):
+                with open(CONFIG_PATH, 'r') as f:
+                    config = json.load(f)
+            
+            config['_encryption_key'] = base64.urlsafe_b64encode(key).decode()
+            
+            with open(CONFIG_PATH, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"[SECURITY] Failed to save encryption key: {e}")
+    
+    return key
+
+def encrypt_token(token: str, admin_key: str = None) -> str:
+    """
+    Encrypt Discord bot token using Fernet symmetric encryption.
+    Returns base64-encoded encrypted token, or plain token if encryption unavailable.
+    """
+    if not token:
+        return None
+    
+    if not CRYPTOGRAPHY_AVAILABLE:
+        # Fallback: return plain token (backward compatibility)
+        return token
+    
+    try:
+        key = _get_encryption_key(admin_key, save_if_new=True)
+        if not key:
+            return token
+        
+        fernet = Fernet(key)
+        encrypted = fernet.encrypt(token.encode())
+        return base64.urlsafe_b64encode(encrypted).decode()
+    except Exception as e:
+        # If encryption fails, return plain token (backward compatibility)
+        print(f"[SECURITY] Encryption failed: {e}, storing plain token")
+        return token
+
+def decrypt_token(encrypted_token: str, admin_key: str = None) -> str:
+    """
+    Decrypt Discord bot token.
+    Returns decrypted token, or original value if not encrypted or encryption unavailable.
+    """
+    if not encrypted_token:
+        return None
+    
+    if not CRYPTOGRAPHY_AVAILABLE:
+        # Fallback: return as-is (assume plain token)
+        return encrypted_token
+    
+    # Check if token appears to be encrypted (base64-encoded Fernet token)
+    # Plain Discord tokens contain dots and are shorter, encrypted ones are longer base64 strings
+    try:
+        # Try to decode as base64 first
+        decoded = base64.urlsafe_b64decode(encrypted_token.encode())
+        
+        # If it's a valid Fernet token (starts with Fernet header), decrypt it
+        if decoded.startswith(b'gAAAAA'):  # Fernet tokens start with this
+            key = _get_encryption_key(admin_key)
+            if key:
+                fernet = Fernet(key)
+                decrypted = fernet.decrypt(decoded)
+                return decrypted.decode()
+    except Exception:
+        # Not encrypted or decryption failed, return as-is (plain token)
+        pass
+    
+    # Return as-is if it doesn't appear to be encrypted
+    return encrypted_token
 

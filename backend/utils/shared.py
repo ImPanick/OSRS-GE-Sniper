@@ -5,7 +5,17 @@ import os
 import json
 import threading
 import requests
+import base64
 from datetime import datetime
+
+# Try to import cryptography for token decryption
+try:
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    CRYPTOGRAPHY_AVAILABLE = False
 
 # Thread-safe storage for item data
 _item_lock = threading.Lock()
@@ -29,6 +39,35 @@ if os.path.exists(CONFIG_PATH):
             CONFIG = json.load(f)
     except (json.JSONDecodeError, IOError):
         CONFIG = {}
+
+# Decrypt token if encrypted (for backward compatibility with plain tokens)
+def _decrypt_token_if_needed(encrypted_token: str) -> str:
+    """Decrypt token if encrypted, otherwise return as-is"""
+    if not encrypted_token or not CRYPTOGRAPHY_AVAILABLE:
+        return encrypted_token
+    
+    try:
+        decoded = base64.urlsafe_b64decode(encrypted_token.encode())
+        if decoded.startswith(b'gAAAAA'):  # Fernet token
+            admin_key = CONFIG.get('admin_key', '')
+            if admin_key:
+                kdf = PBKDF2HMAC(
+                    algorithm=hashes.SHA256(),
+                    length=32,
+                    salt=b'osrs_ge_sniper_salt',
+                    iterations=100000,
+                )
+                key = base64.urlsafe_b64encode(kdf.derive(admin_key.encode()))
+                fernet = Fernet(key)
+                return fernet.decrypt(decoded).decode()
+    except Exception:
+        pass
+    
+    return encrypted_token
+
+# Decrypt discord_token if present and encrypted
+if 'discord_token' in CONFIG:
+    CONFIG['discord_token'] = _decrypt_token_if_needed(CONFIG['discord_token'])
 
 # Set default thresholds if not present
 if "thresholds" not in CONFIG:

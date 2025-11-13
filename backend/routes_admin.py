@@ -17,7 +17,7 @@ from utils.database import (
 from security import (
     rate_limit, validate_json_payload, require_admin_key,
     sanitize_guild_id, sanitize_channel_id, sanitize_webhook_url,
-    sanitize_token, escape_html
+    sanitize_token, escape_html, encrypt_token
 )
 from datetime import datetime
 import json
@@ -294,7 +294,7 @@ def tier_config_page(guild_id):
 @validate_json_payload(max_size=5000)
 @rate_limit(max_requests=5, window=300)
 def setup_save_token():
-    """Save Discord bot token"""
+    """Save Discord bot token (encrypted)"""
     if not is_local_request():
         return jsonify({"error": "Setup can only be done from local network"}), 403
     
@@ -308,24 +308,42 @@ def setup_save_token():
         if not token:
             return jsonify({"error": "Invalid token format"}), 400
         
-        utils.shared.CONFIG['discord_token'] = token
-        
+        # Ensure admin_key exists before encryption (needed for key derivation)
         if not utils.shared.CONFIG.get('admin_key') or utils.shared.CONFIG.get('admin_key') == 'CHANGE_THIS_TO_A_SECURE_RANDOM_STRING':
             utils.shared.CONFIG['admin_key'] = secrets.token_urlsafe(32)
         
+        # Encrypt the token before storing
+        encrypted_token = encrypt_token(token, utils.shared.CONFIG.get('admin_key'))
+        utils.shared.CONFIG['discord_token'] = encrypted_token
+        
+        # Determine root config path (prioritize root config.json)
+        root_config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+        if not os.path.exists(root_config_path):
+            # Fallback to current CONFIG_PATH
+            root_config_path = CONFIG_PATH
+        
+        # Save to root config.json (where bot reads from)
         try:
-            with open(CONFIG_PATH, 'w') as f:
+            with open(root_config_path, 'w') as f:
                 json.dump(utils.shared.CONFIG, f, indent=2)
         except IOError:
             return jsonify({"error": "Failed to save configuration"}), 500
         
+        # Also save to backend config.json if different (for backend access)
+        if root_config_path != CONFIG_PATH:
+            try:
+                with open(CONFIG_PATH, 'w') as f:
+                    json.dump(utils.shared.CONFIG, f, indent=2)
+            except IOError:
+                pass  # Non-critical, root config is primary
+        
         # Reload CONFIG from file
-        with open(CONFIG_PATH, 'r') as f:
+        with open(root_config_path, 'r') as f:
             utils.shared.CONFIG = json.load(f)
         
         return jsonify({"status": "saved"})
-    except Exception:
-        return jsonify({"error": "Invalid request"}), 400
+    except Exception as e:
+        return jsonify({"error": f"Invalid request: {str(e)}"}), 400
 
 @bp.route('/api/setup/test-bot', methods=['GET'])
 @rate_limit(max_requests=10, window=60)
