@@ -124,6 +124,15 @@ export default function AdminPage() {
         errorMsg = 'Authentication failed. Please check your admin key.'
         localStorage.removeItem('admin_key')
         setAuthenticated(false)
+      } else if (error.response?.status === 429) {
+        // Rate limit exceeded
+        const retryAfter = error.response?.data?.retry_after
+        if (retryAfter) {
+          const minutes = Math.ceil(retryAfter / 60)
+          errorMsg = `Rate limit exceeded. Please try again in ${minutes} minute${minutes !== 1 ? 's' : ''}.`
+        } else {
+          errorMsg = 'Rate limit exceeded. Please wait a few minutes before trying again.'
+        }
       } else if (error.response?.data?.error) {
         errorMsg = error.response.data.error
       } else if (error.response?.data?.message) {

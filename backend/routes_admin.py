@@ -666,7 +666,7 @@ def pull_updates():
 
 @bp.route('/api/admin/cache/fetch_recent', methods=['POST'])
 @require_admin_key()
-@rate_limit(max_requests=5, window=300)  # Limit to 5 requests per 5 minutes
+@rate_limit(max_requests=10, window=300)  # Limit to 10 requests per 5 minutes (more lenient for admin)
 def fetch_recent_cache():
     """
     Manually trigger a backfill of recent GE history data.
