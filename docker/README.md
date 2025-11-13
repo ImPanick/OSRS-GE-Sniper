@@ -22,30 +22,13 @@ Services start in the following order with health checks:
 
 **IMPORTANT**: Always run `docker-compose` from the `docker/` directory. The paths are configured to work universally from this location.
 
-### Step 1: Initialize config.json
+### Prerequisites
 
-Before starting Docker, ensure `config.json` exists in the repository root. If it doesn't exist, it will be created from `config.json.example`:
+**None!** The Docker setup automatically creates `config.json` from `config.json.example` if it doesn't exist. Just run docker-compose and everything will be set up automatically.
 
-**Linux/macOS:**
-```bash
-cd docker
-./init-config.sh
-```
+**Note**: After services start, visit http://localhost:3000 and use the **Setup page** to configure your Discord bot token and other settings. The setup page will save everything to `config.json` automatically.
 
-**Windows (PowerShell):**
-```powershell
-cd docker
-.\init-config.ps1
-```
-
-**Manual:**
-```bash
-# From repository root
-cp config.json.example config.json
-# Then edit config.json and set your discord_token and admin_key
-```
-
-### Step 2: Start Services
+### Start Services
 
 ```bash
 # Navigate to the docker directory
@@ -55,7 +38,10 @@ cd docker
 docker-compose up -d --build
 ```
 
-**Note**: If `config.json` doesn't exist when Docker starts, Docker will create a **directory** instead of mounting the file. Always ensure the file exists before running `docker-compose`.
+**Important**: 
+- `config.json` is automatically created if it doesn't exist (from `config.json.example`)
+- After services start, visit http://localhost:3000 to complete setup via the web UI
+- The setup page will guide you through configuring your Discord bot token and other settings
 
 The docker-compose.yml uses environment variables with sensible defaults that work when run from the `docker/` directory. If you need to use absolute paths or run from a different location, create a `.env` file in the `docker/` directory (see `.env.example`).
 
@@ -157,11 +143,10 @@ To override these, create a `.env` file in the `docker/` directory (see `.env.ex
 - **Path issues**: If you see mount errors, ensure you're running `docker-compose` from the `docker/` directory, or create a `.env` file with absolute paths
 
 ### config.json is a directory instead of a file
-This happens when Docker tries to mount a file that doesn't exist. To fix:
+This should no longer happen as the entrypoint automatically creates the file. If it does:
 1. **Stop Docker containers**: `docker-compose down`
 2. **Remove the directory**: `rm -rf ../config.json` (Linux/macOS) or `Remove-Item -Recurse -Force ..\config.json` (Windows)
-3. **Create the file**: Run `./init-config.sh` (Linux/macOS) or `.\init-config.ps1` (Windows) from the `docker/` directory
-4. **Restart**: `docker-compose up -d`
+3. **Restart**: `docker-compose up -d` (entrypoint will create the file automatically)
 
 ### Services not connecting
 - Ensure all services are on the same network: `sniper-network`

@@ -28,26 +28,27 @@ A Discord bot and web dashboard for tracking OSRS Grand Exchange price movements
    cd OSRS-GE-Sniper
    ```
 
-2. **Set up Discord Bot**
+2. **Get Discord Bot Token** (you'll use this in the setup page):
    - See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed Discord bot setup instructions
    - Quick steps:
      1. Create Discord application at https://discord.com/developers/applications
      2. Create bot and enable MESSAGE CONTENT INTENT and SERVER MEMBERS INTENT
-     3. Copy bot token and add to `config.json`
+     3. Copy bot token (you'll enter this in the web UI setup page)
      4. Generate invite link with `bot` and `applications.commands` scopes
      5. Invite bot to your server with required permissions
 
-3. **Configure settings**
-   ```bash
-   cp config.json.example config.json
-   # Edit config.json with your Discord token, webhook, etc.
-   ```
+3. **No manual configuration needed!** The Docker setup automatically creates `config.json` if it doesn't exist.
 
-4. **Deploy with Docker (Single Command)**
+4. **Deploy with Docker**
    ```bash
    cd docker
    docker compose up -d --build
    ```
+
+5. **Complete Setup via Web UI**
+   - After services start, visit http://localhost:3000
+   - You'll be redirected to the setup page if configuration is needed
+   - Follow the setup wizard to configure your Discord bot token and other settings
    
    This single command will:
    - Build all services (cache-updater, backend, frontend, bot)
@@ -90,7 +91,11 @@ For complete step-by-step instructions, see [DEPLOYMENT.md](DEPLOYMENT.md#discor
    - Select your server and authorize
 
 5. **Configure Bot Token**
-   - Add the bot token to `config.json`:
+   - After starting Docker, visit http://localhost:3000
+   - Complete the setup wizard to add your bot token
+   - The setup page will save everything automatically
+   
+   (Old manual method - not recommended):
    ```json
    {
      "discord_token": "YOUR_BOT_TOKEN_HERE",

@@ -26,11 +26,23 @@ spike_items = []
 all_items = []  # All items for volume tracker
 
 # Load config with fallback paths for Docker and local development
-CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))
-if not os.path.exists(CONFIG_PATH):
-    CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
-if not os.path.exists(CONFIG_PATH):
-    CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+# Priority: 1) CONFIG_PATH env var, 2) /repo/config.json (Docker), 3) relative paths (local dev)
+CONFIG_PATH = os.getenv('CONFIG_PATH')
+if not CONFIG_PATH:
+    # Try Docker path first (/repo is mounted repo root)
+    docker_path = '/repo/config.json'
+    if os.path.exists(docker_path):
+        CONFIG_PATH = docker_path
+    else:
+        # Fall back to relative paths for local development
+        CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+        if not os.path.exists(CONFIG_PATH):
+            CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
+        if not os.path.exists(CONFIG_PATH):
+            CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+
+# Note: config.json auto-creation is handled by Docker entrypoint script
+# This ensures the file exists before Docker tries to mount it
 
 CONFIG = {}
 if os.path.exists(CONFIG_PATH):

@@ -40,12 +40,12 @@ services:
     volumes:
       - ${BACKEND_SERVER_CONFIGS:-../backend/server_configs}:/app/server_configs
       - ${BACKEND_UTILS:-../backend/utils}:/app/utils
-      - ${CONFIG_FILE:-../config.json}:/app/config.json:ro
       - ${REPO_ROOT:-..}:/repo  # Mount entire repo for git operations (needs write access for git pull)
+      # Mount repo root to access config.json (entrypoint will create it if missing)
       - /var/run/docker.sock:/var/run/docker.sock:ro  # Mount Docker socket for container management
     environment:
       - FLASK_ENV=production
-      - CONFIG_PATH=/app/config.json
+      - CONFIG_PATH=/repo/config.json
       - DB_PATH=/app/utils/history.db
       - OSRS_API_USER_AGENT=${OSRS_API_USER_AGENT:-OSRS-GE-Sniper/1.0 (https://github.com/ImPanick/OSRS-GE-Sniper; contact@example.com)}
     depends_on:
@@ -94,11 +94,11 @@ services:
       context: ..
       dockerfile: docker/dockerfile.bot
     volumes:
-      - ${CONFIG_FILE:-../config.json}:/app/config.json:ro
+      - ${REPO_ROOT:-..}:/repo  # Mount repo to access config.json (entrypoint needs write access)
       - ${DISCORD_BOT_DATA:-../discord-bot/data}:/app/data
     environment:
       - BACKEND_URL=http://backend:5000
-      - CONFIG_PATH=/app/config.json
+      - CONFIG_PATH=/repo/config.json
     depends_on:
       backend:
         condition: service_healthy
@@ -115,10 +115,10 @@ services:
     command: python utils/dump_worker.py
     volumes:
       - ${BACKEND_UTILS:-../backend/utils}:/app/utils
-      - ${CONFIG_FILE:-../config.json}:/app/config.json:ro
+      - ${REPO_ROOT:-..}:/repo:ro  # Mount repo to access config.json
     environment:
       - DB_PATH=/app/utils/history.db
-      - CONFIG_PATH=/app/config.json
+      - CONFIG_PATH=/repo/config.json
       - OSRS_API_USER_AGENT=${OSRS_API_USER_AGENT:-OSRS-GE-Sniper/1.0 (https://github.com/ImPanick/OSRS-GE-Sniper; contact@example.com)}
     depends_on:
       cache-updater:

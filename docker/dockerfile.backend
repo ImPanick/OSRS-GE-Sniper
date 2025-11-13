@@ -31,12 +31,20 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./ 
 COPY backend/utils/ ./utils/
 
+# Copy entrypoint script
+COPY docker/entrypoint-backend.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Copy config.json.example into image (for auto-creation)
+COPY config.json.example /app/config.json.example
+
 # Create directories for persistent data
 RUN mkdir -p server_configs utils
 
 # Expose port
 EXPOSE 5000
 
-# Run application
+# Use entrypoint to auto-create config.json if needed
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "app.py"]
 
