@@ -664,3 +664,60 @@ def pull_updates():
             "error": str(e)
         }), 500
 
+@bp.route('/api/admin/cache/fetch_recent', methods=['POST'])
+@require_admin_key()
+@rate_limit(max_requests=5, window=300)  # Limit to 5 requests per 5 minutes
+def fetch_recent_cache():
+    """
+    Manually trigger a backfill of recent GE history data.
+    
+    Accepts optional JSON body: { "hours": 4 }
+    Default is 4 hours, max is 24 hours.
+    """
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    try:
+        data = request.get_json(force=True) if request.is_json else {}
+        hours = data.get('hours', 4)
+        
+        # Validate hours parameter
+        try:
+            hours = int(hours)
+            if hours < 1 or hours > 24:
+                return jsonify({"error": "Hours must be between 1 and 24"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid hours parameter"}), 400
+        
+        # Import and call fetch_recent_history
+        from utils.dump_engine import fetch_recent_history
+        
+        result = fetch_recent_history(hours=hours)
+        
+        # Check if there was an error
+        if 'error' in result:
+            return jsonify({
+                "ok": False,
+                "error": result.get('error'),
+                "hours": result.get('hours', hours),
+                "snapshots": result.get('snapshots', 0),
+                "items_written": result.get('items_written', 0)
+            }), 500
+        
+        return jsonify({
+            "ok": True,
+            "hours": result.get('hours', hours),
+            "snapshots": result.get('snapshots', 0),
+            "items_written": result.get('items_written', 0)
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] fetch_recent_cache failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "ok": False,
+            "error": "Unexpected error occurred",
+            "message": str(e)
+        }), 500
+

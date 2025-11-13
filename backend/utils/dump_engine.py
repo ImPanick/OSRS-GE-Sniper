@@ -187,6 +187,150 @@ def record_snapshot(snapshot: Dict[str, Dict]):
         import traceback
         traceback.print_exc()
 
+def fetch_5m_snapshot_at_timestamp(timestamp: int) -> Dict[str, Dict]:
+    """
+    Fetch 5-minute snapshot from OSRS Wiki API for a specific timestamp
+    
+    Args:
+        timestamp: Unix timestamp (will be aligned to 5-minute boundary)
+    
+    Returns:
+        Dict mapping item_id (str) to {low, high, volume, timestamp}
+    """
+    try:
+        # Align timestamp to 5-minute boundary
+        aligned_ts = (timestamp // 300) * 300
+        
+        # Fetch 5-minute prices for specific timestamp
+        url = f"{BASE_URL}/5m?timestamp={aligned_ts}"
+        data_5m_raw, source = fetch_with_fallback(
+            url,
+            HEADERS,
+            None,  # Fallback API doesn't support 5m endpoint
+            None,
+            timeout=30
+        )
+        
+        if source == 'fallback':
+            print(f"[INFO] Using fallback API for 5m prices at timestamp {aligned_ts}")
+        
+        # Convert to dict format
+        data_5m = convert_5m_data_to_dict(data_5m_raw)
+        
+        # Build snapshot with timestamp
+        snapshot = {}
+        for item_id_str, item_data in data_5m.items():
+            snapshot[item_id_str] = {
+                "low": item_data.get("avgLowPrice"),
+                "high": item_data.get("avgHighPrice"),
+                "volume": item_data.get("volume", 0) or 0,
+                "timestamp": item_data.get("timestamp") or aligned_ts
+            }
+        
+        return snapshot
+        
+    except Exception as e:
+        print(f"[ERROR] fetch_5m_snapshot_at_timestamp failed for timestamp {timestamp}: {e}")
+        return {}
+
+def fetch_recent_history(hours: int = 4) -> Dict:
+    """
+    Fetches 5-minute GE snapshots for the last `hours` hours
+    from the RuneScape prices wiki API and writes them to the DB.
+    
+    Args:
+        hours: Number of hours of history to fetch (default 4, max 24)
+    
+    Returns:
+        Summary dict: { 'hours': hours, 'snapshots': n, 'items_written': m }
+    """
+    # Cap hours to a sane maximum
+    hours = min(max(1, hours), 24)
+    
+    try:
+        now_ts = int(datetime.now().timestamp())
+        # Align to 5-minute boundary
+        now_floor = (now_ts // 300) * 300
+        
+        # Calculate start timestamp (hours ago, also aligned)
+        start_ts = now_floor - (hours * 3600)
+        start_ts = (start_ts // 300) * 300  # Align start to 5-minute boundary
+        
+        total_snapshots = 0
+        total_items_written = 0
+        
+        # Iterate backwards from now_floor to start_ts (inclusive) in 300s increments
+        current_ts = now_floor
+        timestamps_to_fetch = []
+        
+        while current_ts >= start_ts:
+            timestamps_to_fetch.append(current_ts)
+            current_ts -= 300
+        
+        print(f"[DUMP_ENGINE] Fetching {len(timestamps_to_fetch)} snapshots for last {hours} hours")
+        
+        for ts in timestamps_to_fetch:
+            try:
+                # Fetch snapshot for this timestamp
+                snapshot = fetch_5m_snapshot_at_timestamp(ts)
+                
+                if not snapshot:
+                    print(f"[WARN] No data for timestamp {ts}")
+                    continue
+                
+                # Record snapshot to database (handles duplicates via INSERT OR REPLACE)
+                items_count = 0
+                with db_transaction() as conn:
+                    c = conn.cursor()
+                    
+                    for item_id_str, data in snapshot.items():
+                        item_id = int(item_id_str)
+                        timestamp = data.get("timestamp", ts)
+                        low = data.get("low")
+                        high = data.get("high")
+                        volume = data.get("volume", 0)
+                        
+                        if low is None or high is None:
+                            continue
+                        
+                        # Insert or replace (handle duplicates)
+                        c.execute("""
+                            INSERT OR REPLACE INTO ge_prices_5m 
+                            (item_id, timestamp, low, high, volume)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (item_id, timestamp, low, high, volume))
+                        items_count += 1
+                
+                total_snapshots += 1
+                total_items_written += items_count
+                
+                # Small sleep between requests to respect rate limits
+                time.sleep(0.3)
+                
+            except Exception as e:
+                print(f"[ERROR] Failed to fetch/record snapshot for timestamp {ts}: {e}")
+                # Continue to next timestamp
+                continue
+        
+        print(f"[DUMP_ENGINE] Fetched {total_snapshots} snapshots, wrote {total_items_written} item entries")
+        
+        return {
+            'hours': hours,
+            'snapshots': total_snapshots,
+            'items_written': total_items_written
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] fetch_recent_history failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'hours': hours,
+            'snapshots': 0,
+            'items_written': 0,
+            'error': str(e)
+        }
+
 def get_recent_history(item_id: int, minutes: int = 60) -> List[Dict]:
     """
     Get recent 5-minute snapshots for an item
@@ -383,6 +527,8 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
         - flags: List of special flags (e.g., "slow_buy", "one_gp_dump", "super")
         - timestamp: ISO timestamp of snapshot
     """
+    global _cache_lock, _opportunities_cache, _cache_timestamp
+    
     # Check cache first
     if use_cache:
         with _cache_lock:
@@ -510,7 +656,6 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
         
         # Update cache
         with _cache_lock:
-            global _opportunities_cache, _cache_timestamp
             _opportunities_cache = opportunities.copy()
             _cache_timestamp = time.time()
         

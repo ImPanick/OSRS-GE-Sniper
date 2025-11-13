@@ -214,6 +214,12 @@ export const apiClient = {
     const { data } = await api.get('/api/tiers', { params: { guild_id: guildId } })
     return data
   },
+
+  // Cache management endpoint
+  fetchRecentCache: async (hours: number = 4) => {
+    const { data } = await api.post('/api/admin/cache/fetch_recent', { hours })
+    return data
+  },
 }
 
 export default api

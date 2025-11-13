@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { apiClient } from '@/lib/api'
 import { Card } from '@/components/Card'
-import { Lock, RefreshCw, Download, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
+import { Lock, RefreshCw, Download, CheckCircle, XCircle, AlertCircle, Database } from 'lucide-react'
 
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false)
@@ -11,6 +11,8 @@ export default function AdminPage() {
   const [updateStatus, setUpdateStatus] = useState<any>(null)
   const [servers, setServers] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [cacheLoading, setCacheLoading] = useState(false)
+  const [cacheResult, setCacheResult] = useState<any>(null)
 
   const authenticate = () => {
     if (!adminKey) {
@@ -96,6 +98,49 @@ export default function AdminPage() {
     }
   }
 
+  const fetchRecentCache = async () => {
+    setCacheLoading(true)
+    setCacheResult(null)
+    try {
+      const result = await apiClient.fetchRecentCache(4)
+      if (result.ok) {
+        setCacheResult({
+          success: true,
+          hours: result.hours,
+          snapshots: result.snapshots,
+          items_written: result.items_written
+        })
+      } else {
+        setCacheResult({
+          success: false,
+          error: result.error || 'Unknown error occurred'
+        })
+      }
+    } catch (error: any) {
+      console.error('Failed to fetch recent cache:', error)
+      let errorMsg = 'Failed to fetch recent cache'
+      
+      if (error.response?.status === 401) {
+        errorMsg = 'Authentication failed. Please check your admin key.'
+        localStorage.removeItem('admin_key')
+        setAuthenticated(false)
+      } else if (error.response?.data?.error) {
+        errorMsg = error.response.data.error
+      } else if (error.response?.data?.message) {
+        errorMsg = error.response.data.message
+      } else if (error.message) {
+        errorMsg = error.message
+      }
+      
+      setCacheResult({
+        success: false,
+        error: errorMsg
+      })
+    } finally {
+      setCacheLoading(false)
+    }
+  }
+
   useEffect(() => {
     const savedKey = localStorage.getItem('admin_key')
     if (savedKey) {
@@ -177,6 +222,72 @@ export default function AdminPage() {
                   <p>Remote: <code className="text-primary-400">{updateStatus.remote_commit.substring(0, 8)}</code></p>
                 )}
               </div>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card title="Cache & History Controls" icon={<Database className="w-5 h-5" />}>
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm text-dark-300 mb-4">
+              Manually fetch the last 4 hours of 5-minute GE trade snapshots and populate the local database. 
+              Useful after initial deployment or outages.
+            </p>
+            <p className="text-xs text-dark-400 mb-4">
+              Note: This operation respects rate limits and may take a minute to complete.
+            </p>
+          </div>
+          
+          <button
+            onClick={fetchRecentCache}
+            disabled={cacheLoading}
+            className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {cacheLoading ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                Fetching...
+              </>
+            ) : (
+              <>
+                <Database className="w-4 h-4" />
+                Fetch last 4 hours
+              </>
+            )}
+          </button>
+
+          {cacheResult && (
+            <div className={`mt-4 p-4 rounded-lg border ${
+              cacheResult.success 
+                ? 'bg-dark-800 border-green-500/50' 
+                : 'bg-dark-800 border-red-500/50'
+            }`}>
+              <div className="flex items-center gap-2 mb-2">
+                {cacheResult.success ? (
+                  <CheckCircle className="w-5 h-5 text-green-400" />
+                ) : (
+                  <XCircle className="w-5 h-5 text-red-400" />
+                )}
+                <span className={`font-semibold ${
+                  cacheResult.success ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {cacheResult.success ? 'Success' : 'Error'}
+                </span>
+              </div>
+              {cacheResult.success ? (
+                <div className="text-sm text-dark-300 space-y-1">
+                  <p>
+                    Fetched <span className="text-primary-400 font-semibold">{cacheResult.hours}h</span> history: 
+                    {' '}<span className="text-primary-400 font-semibold">{cacheResult.snapshots.toLocaleString()}</span> snapshots, 
+                    {' '}<span className="text-primary-400 font-semibold">{cacheResult.items_written.toLocaleString()}</span> items written.
+                  </p>
+                </div>
+              ) : (
+                <div className="text-sm text-red-400">
+                  {cacheResult.error}
+                </div>
+              )}
             </div>
           )}
         </div>
