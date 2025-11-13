@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { apiClient } from '@/lib/api'
 import { Card } from '@/components/Card'
@@ -41,7 +41,7 @@ interface RecipeData {
   }
 }
 
-export default function RecipePage() {
+function RecipePageContent() {
   const searchParams = useSearchParams()
   const [searchQuery, setSearchQuery] = useState(searchParams.get('name') || '')
   const [recipe, setRecipe] = useState<RecipeData | null>(null)
@@ -67,8 +67,10 @@ export default function RecipePage() {
   }
 
   useEffect(() => {
-    if (searchQuery) {
-      fetchRecipe(searchQuery)
+    const name = searchParams.get('name')
+    if (name) {
+      setSearchQuery(name)
+      fetchRecipe(name)
     }
   }, [searchParams])
 
@@ -275,6 +277,24 @@ export default function RecipePage() {
         </>
       )}
     </div>
+  )
+}
+
+export default function RecipePage() {
+  return (
+    <Suspense fallback={
+      <div className="space-y-6 max-w-6xl mx-auto">
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-2">Recipe Calculator</h1>
+          <p className="text-dark-400">Calculate profit margins for OSRS recipes</p>
+        </div>
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-500"></div>
+        </div>
+      </div>
+    }>
+      <RecipePageContent />
+    </Suspense>
   )
 }
 
