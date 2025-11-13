@@ -5,6 +5,7 @@ import { apiClient, DumpItem } from '@/lib/api'
 import { Card } from '@/components/Card'
 import { TierFilterGrid, TierFilter } from '@/components/TierFilterGrid'
 import { DumpsTable } from '@/components/DumpsTable'
+import { DumpMetricsCharts, DumpItem as ChartDumpItem } from '@/components/DumpMetricsCharts'
 import { TrendingDown, Wifi, WifiOff, RefreshCw } from 'lucide-react'
 import { clsx } from 'clsx'
 
@@ -102,6 +103,18 @@ export default function DashboardPage() {
     return dumps.length
   }, [dumps, selectedFilter])
 
+  // Transform dumps data for charts
+  const dumpItemsForCharts = useMemo<ChartDumpItem[]>(() => {
+    return dumps.map((d) => ({
+      id: d.id,
+      name: d.name,
+      high: d.high,
+      low: d.low,
+      max_buy_4h: d.max_buy_4h,
+      score: d.score,
+    }))
+  }, [dumps])
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -151,6 +164,9 @@ export default function DashboardPage() {
         selectedFilter={selectedFilter}
         onFilterChange={setSelectedFilter}
       />
+
+      {/* Market Metrics Charts */}
+      <DumpMetricsCharts items={dumpItemsForCharts} />
 
       {/* Dumps Table */}
       <Card 
