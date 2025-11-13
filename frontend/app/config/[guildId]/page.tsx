@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card } from '@/components/Card'
-import { Settings, Save, RotateCcw, Users, Hash, Shield, CheckCircle, XCircle, Star } from 'lucide-react'
+import { Settings, Save, RotateCcw, Users, Hash, Shield, CheckCircle, XCircle, Star, Bell } from 'lucide-react'
 import axios from 'axios'
 import { apiClient } from '@/lib/api'
 
@@ -22,6 +22,9 @@ export default function ConfigPage() {
   const [selectedMember, setSelectedMember] = useState<string | null>(null)
   const [tiers, setTiers] = useState<any>(null)
   const [minTierName, setMinTierName] = useState<string>('')
+  const [alertSettings, setAlertSettings] = useState<any>(null)
+  const [savingAlerts, setSavingAlerts] = useState(false)
+  const [alertSaveStatus, setAlertSaveStatus] = useState<string>('')
 
   const fetchConfig = async () => {
     try {
@@ -60,6 +63,66 @@ export default function ConfigPage() {
     }
   }
 
+  const fetchAlertSettings = async () => {
+    try {
+      const settings = await apiClient.getAlertSettings(guildId)
+      setAlertSettings(settings)
+    } catch (error) {
+      console.error('Failed to fetch alert settings:', error)
+      // Set defaults if fetch fails
+      setAlertSettings({
+        min_margin_gp: 0,
+        min_score: 0,
+        enabled_tiers: [],
+        max_alerts_per_interval: 1
+      })
+    }
+  }
+
+  const saveAlertSettings = async () => {
+    if (!alertSettings) return
+
+    setSavingAlerts(true)
+    setAlertSaveStatus('')
+
+    try {
+      // Collect enabled tiers from checkboxes
+      const enabledTiers: string[] = []
+      const tierNames = ['iron', 'copper', 'bronze', 'silver', 'gold', 'platinum', 'ruby', 'sapphire', 'emerald', 'diamond']
+      tierNames.forEach(tier => {
+        const checkbox = document.getElementById(`alert_tier_${tier}`) as HTMLInputElement
+        if (checkbox && checkbox.checked) {
+          enabledTiers.push(tier)
+        }
+      })
+
+      const minMarginGpInput = document.getElementById('min_margin_gp') as HTMLInputElement
+      const minScoreInput = document.getElementById('min_score') as HTMLInputElement
+      const maxAlertsInput = document.getElementById('max_alerts_per_interval') as HTMLInputElement
+
+      const settings = {
+        min_margin_gp: minMarginGpInput ? parseInt(minMarginGpInput.value) || 0 : 0,
+        min_score: minScoreInput ? parseInt(minScoreInput.value) || 0 : 0,
+        enabled_tiers: enabledTiers,
+        max_alerts_per_interval: maxAlertsInput ? parseInt(maxAlertsInput.value) || 1 : 1
+      }
+
+      await apiClient.saveAlertSettings(guildId, settings)
+      setAlertSaveStatus('success')
+      setTimeout(() => setAlertSaveStatus(''), 3000)
+      // Refresh settings
+      await fetchAlertSettings()
+    } catch (error: any) {
+      setAlertSaveStatus('error')
+      console.error('Failed to save alert settings:', error)
+      if (error.response?.data?.error) {
+        alert(`Failed to save: ${error.response.data.error}`)
+      }
+    } finally {
+      setSavingAlerts(false)
+    }
+  }
+
   const handleAssignRole = async (userId: string, roleId: string, action: 'add' | 'remove' = 'add') => {
     try {
       await apiClient.assignRole(guildId, userId, roleId, action)
@@ -75,6 +138,7 @@ export default function ConfigPage() {
     fetchConfig()
     fetchServerInfo()
     fetchTiers()
+    fetchAlertSettings()
     // Refresh server info every 30 seconds
     const interval = setInterval(fetchServerInfo, 30000)
     return () => clearInterval(interval)
@@ -545,6 +609,121 @@ export default function ConfigPage() {
           </div>
         </div>
       </Card>
+
+      {/* Alert Settings */}
+      {alertSettings && (
+        <Card title="Alert Settings" icon={<Bell className="w-5 h-5 text-primary-400" />}>
+          <p className="text-dark-400 mb-6">
+            Configure alert thresholds to control when Discord pings fire. Lower thresholds = more alerts.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">
+                Minimum GP Margin to Alert
+              </label>
+              <input
+                type="number"
+                id="min_margin_gp"
+                defaultValue={alertSettings.min_margin_gp || 0}
+                min="0"
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                placeholder="0"
+              />
+              <p className="text-xs text-dark-500 mt-1">
+                Only items with profit margin &ge; this value will trigger alerts. Set to 0 to allow any margin.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">
+                Minimum Score to Alert
+              </label>
+              <input
+                type="number"
+                id="min_score"
+                defaultValue={alertSettings.min_score || 0}
+                min="0"
+                max="100"
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                placeholder="0"
+              />
+              <p className="text-xs text-dark-500 mt-1">
+                Only dumps with score &ge; this value will trigger alerts (0-100). Set to 0 to allow any score.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">
+                Max Alerts Per Interval
+              </label>
+              <input
+                type="number"
+                id="max_alerts_per_interval"
+                defaultValue={alertSettings.max_alerts_per_interval || 1}
+                min="1"
+                max="10"
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                placeholder="1"
+              />
+              <p className="text-xs text-dark-500 mt-1">
+                Maximum number of alerts to send per check interval (1-10). Helps prevent spam.
+              </p>
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-dark-300 mb-3">
+              Enabled Tiers
+            </label>
+            <p className="text-xs text-dark-500 mb-3">
+              Select which tiers should trigger alerts. If none are selected, all tiers will trigger alerts.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {['iron', 'copper', 'bronze', 'silver', 'gold', 'platinum', 'ruby', 'sapphire', 'emerald', 'diamond'].map(tier => (
+                <label key={tier} className="flex items-center gap-2 p-2 bg-dark-800 rounded border border-dark-700 hover:border-primary-500 cursor-pointer transition-colors">
+                  <input
+                    type="checkbox"
+                    id={`alert_tier_${tier}`}
+                    defaultChecked={alertSettings.enabled_tiers?.includes(tier) || false}
+                    className="w-4 h-4 text-primary-500 bg-dark-700 border-dark-600 rounded focus:ring-primary-500"
+                  />
+                  <span className="text-sm text-white capitalize">{tier}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-4 justify-center">
+            <button
+              onClick={saveAlertSettings}
+              disabled={savingAlerts}
+              className="px-6 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              <Save className="w-4 h-4" />
+              {savingAlerts ? 'Saving...' : 'Save Alert Settings'}
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-6 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg transition-colors flex items-center gap-2"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Reset
+            </button>
+          </div>
+
+          {alertSaveStatus === 'success' && (
+            <div className="mt-4 p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 text-center">
+              ✅ Alert settings saved successfully!
+            </div>
+          )}
+          {alertSaveStatus === 'error' && (
+            <div className="mt-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-center">
+              ❌ Failed to save alert settings
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Tier Settings */}
       {tiers && (

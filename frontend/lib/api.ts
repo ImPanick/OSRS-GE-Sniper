@@ -220,6 +220,22 @@ export const apiClient = {
     const { data } = await api.post('/api/admin/cache/fetch_recent', { hours })
     return data
   },
+
+  // Alert settings endpoints
+  getAlertSettings: async (guildId: string) => {
+    const { data } = await api.get(`/api/config/${guildId}/alerts`)
+    return data
+  },
+
+  saveAlertSettings: async (guildId: string, settings: {
+    min_margin_gp?: number
+    min_score?: number
+    enabled_tiers?: string[]
+    max_alerts_per_interval?: number
+  }) => {
+    const { data } = await api.post(`/api/config/${guildId}/alerts`, settings)
+    return data
+  },
 }
 
 export default api

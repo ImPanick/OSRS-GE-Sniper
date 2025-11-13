@@ -27,16 +27,22 @@ _rate_limit_max_requests = 100  # Max requests per window
 def sanitize_guild_id(guild_id: str) -> str:
     """
     Sanitize guild ID to prevent path traversal attacks
-    Only allows numeric strings (Discord IDs are numeric)
+    Allows numeric strings (Discord IDs are numeric) or 'default' for frontend use
     """
     if not guild_id:
         return None
     
+    guild_id_str = str(guild_id).strip()
+    
+    # Allow 'default' as a special case for frontend when no real Discord server is configured
+    if guild_id_str == 'default':
+        return 'default'
+    
     # Discord IDs are numeric strings, 17-19 digits
-    if not re.match(r'^\d{17,19}$', str(guild_id)):
+    if not re.match(r'^\d{17,19}$', guild_id_str):
         return None
     
-    return str(guild_id)
+    return guild_id_str
 
 def sanitize_channel_id(channel_id: str) -> str:
     """

@@ -12,7 +12,8 @@ from config_manager import (
 )
 from utils.database import (
     get_all_tiers, get_guild_tier_settings, get_guild_config,
-    update_tier, update_guild_tier_setting, update_guild_config
+    update_tier, update_guild_tier_setting, update_guild_config,
+    get_guild_alert_settings, update_guild_alert_settings
 )
 from security import (
     rate_limit, validate_json_payload, require_admin_key,
@@ -681,6 +682,109 @@ def pull_updates():
             "message": f"Update failed: {str(e)}",
             "error": str(e)
         }), 500
+
+@bp.route('/api/config/<guild_id>/alerts', methods=['GET'])
+@rate_limit(max_requests=100, window=60)
+def api_get_alert_settings(guild_id):
+    """Get alert settings for a guild (accessible to bot and local requests)"""
+    # Allow bot to fetch settings (bot runs on same machine/network)
+    
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    if is_banned(guild_id):
+        return jsonify({"error": "This server has been banned from using the sniper bot."}), 403
+    
+    try:
+        settings = get_guild_alert_settings(guild_id)
+        return jsonify(settings)
+    except Exception as e:
+        print(f"[ERROR] api_get_alert_settings: {e}")
+        return jsonify({"error": "Failed to get alert settings"}), 500
+
+@bp.route('/api/config/<guild_id>/alerts', methods=['POST'])
+@rate_limit(max_requests=30, window=60)
+def api_save_alert_settings(guild_id):
+    """Save alert settings for a guild"""
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Configuration interface is LAN-only."}), 403
+    
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    if is_banned(guild_id):
+        return jsonify({"error": "This server has been banned from using the sniper bot."}), 403
+    
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        # Validate and extract settings
+        min_margin_gp = data.get('min_margin_gp')
+        min_score = data.get('min_score')
+        enabled_tiers = data.get('enabled_tiers')
+        max_alerts_per_interval = data.get('max_alerts_per_interval')
+        
+        # Validate min_margin_gp
+        if min_margin_gp is not None:
+            try:
+                min_margin_gp = int(min_margin_gp)
+                if min_margin_gp < 0:
+                    return jsonify({"error": "min_margin_gp must be >= 0"}), 400
+            except (ValueError, TypeError):
+                return jsonify({"error": "min_margin_gp must be an integer"}), 400
+        
+        # Validate min_score
+        if min_score is not None:
+            try:
+                min_score = int(min_score)
+                if min_score < 0 or min_score > 100:
+                    return jsonify({"error": "min_score must be between 0 and 100"}), 400
+            except (ValueError, TypeError):
+                return jsonify({"error": "min_score must be an integer"}), 400
+        
+        # Validate enabled_tiers
+        if enabled_tiers is not None:
+            if not isinstance(enabled_tiers, list):
+                return jsonify({"error": "enabled_tiers must be an array"}), 400
+            valid_tiers = ['iron', 'copper', 'bronze', 'silver', 'gold', 'platinum', 'ruby', 'sapphire', 'emerald', 'diamond']
+            for tier in enabled_tiers:
+                if tier.lower() not in valid_tiers:
+                    return jsonify({"error": f"Invalid tier: {tier}. Must be one of: {', '.join(valid_tiers)}"}), 400
+            # Normalize to lowercase
+            enabled_tiers = [t.lower() for t in enabled_tiers]
+        
+        # Validate max_alerts_per_interval
+        if max_alerts_per_interval is not None:
+            try:
+                max_alerts_per_interval = int(max_alerts_per_interval)
+                if max_alerts_per_interval < 1 or max_alerts_per_interval > 10:
+                    return jsonify({"error": "max_alerts_per_interval must be between 1 and 10"}), 400
+            except (ValueError, TypeError):
+                return jsonify({"error": "max_alerts_per_interval must be an integer"}), 400
+        
+        # Update settings
+        success = update_guild_alert_settings(
+            guild_id,
+            min_margin_gp=min_margin_gp,
+            min_score=min_score,
+            enabled_tiers=enabled_tiers,
+            max_alerts_per_interval=max_alerts_per_interval
+        )
+        
+        if success:
+            settings = get_guild_alert_settings(guild_id)
+            return jsonify({"status": "saved", "settings": settings})
+        else:
+            return jsonify({"error": "Failed to save alert settings"}), 500
+    except Exception as e:
+        print(f"[ERROR] api_save_alert_settings: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to save alert settings"}), 500
 
 @bp.route('/api/admin/cache/fetch_recent', methods=['POST'])
 @require_admin_key()

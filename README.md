@@ -7,15 +7,18 @@ A Discord bot and web dashboard for tracking OSRS Grand Exchange price movements
 ## Features
 
 - **Real-time Price Tracking**: Monitors all GE items for dumps, spikes, and flips
-- **Discord Notifications**: Per-server channel routing with role pings based on risk/quality
-- **Web Dashboard**: View top flips, dumps, spikes, and volume tracker
-- **Per-Server Configuration**: Each Discord server can configure channels and roles
+- **Tier System**: 10-tier quality scoring system (Iron → Diamond) with automatic tier assignment based on dump quality scores
+- **Advanced Filtering**: Filter dumps by tier, group (metals/gems), and special flags (slow_buy, one_gp_dump, super)
+- **Discord Notifications**: Per-server channel routing with role pings based on tier/quality
+- **Tier Configuration**: Per-server tier settings with Discord role mentions and minimum tier thresholds
+- **Web Dashboard**: View top flips, dumps, spikes, and volume tracker with tier and group filters
+- **Per-Server Configuration**: Each Discord server can configure channels, roles, and tier settings
 - **Server Information Management**: View roles, members, channels, and online count via admin panel
 - **Role Assignment**: Assign roles to members directly from the web interface
 - **Rich Embeds**: Detailed notifications with item thumbnails, price history, risk metrics, and profit calculations
 - **Risk Assessment**: Calculates risk scores, liquidity, and profitability confidence
 - **Item Thumbnails**: All notifications include item images from OSRS Wiki
-- **Admin Controls**: Ban/remove servers, manage configurations, view server details
+- **Admin Controls**: Ban/remove servers, manage configurations, view server details, and manage tier system
 
 ## Quick Start
 
@@ -119,25 +122,75 @@ Edit `config.json`:
 All web UI is provided by the Next.js frontend (accessible at `http://localhost:3000`):
 
 - `/dashboard` - Main dashboard with top flips, dumps, spikes
+  - **Tier Filters**: Filter by tier (Iron, Copper, Bronze, Silver, Gold, Platinum, Ruby, Sapphire, Emerald, Diamond)
+  - **Group Filters**: Filter by group (All Metals, All Gems)
+  - **Special Filters**: Slow Buy, 1GP Dumps, Super (Platinum+)
 - `/volume-tracker` - All GE items with filtering and sorting
 - `/config/<guild_id>` - Per-server configuration with:
   - Server information (roles, members, channels, online count)
+  - **Tier Configuration**: Configure Discord role mentions per tier and minimum tier threshold
   - Role assignment interface (assign roles to members)
   - Channel selection (click to copy channel IDs)
   - Role selection (click to copy role IDs)
   - Bot permission status
 - `/admin` - Admin panel (requires admin_key) with:
   - Server management (ban/unban/delete)
+  - Tier system management (score ranges, guild tier settings)
   - Auto-updater controls
   - Server list with status
 
 **Note:** The Flask backend (`http://localhost:5000`) provides JSON APIs only. All HTML pages and user interfaces are served by the Next.js frontend.
 
+## API Endpoints
+
+### Dump Opportunities API
+- `GET /api/dumps` - Get dump opportunities with advanced filtering
+  - Query parameters:
+    - `tier` - Filter by tier name (iron, copper, bronze, silver, gold, platinum, ruby, sapphire, emerald, diamond)
+    - `group` - Filter by group (metals, gems)
+    - `special` - Filter by special flags (slow_buy, one_gp_dump, super)
+    - `limit` - Maximum number of results
+    - `format` - Response format (json, html)
+- `GET /api/dumps/<item_id>` - Get specific dump opportunity with recent history
+- `GET /api/tiers?guild_id=<guild_id>` - Get tier configuration for a guild
+
+### Other APIs
+- `GET /api/top` - Top flips
+- `GET /api/spikes` - Price spikes
+- `GET /api/items` - Item lookup and metadata
+- `GET /api/health` - Health check
+
+## Tier System
+
+The tier system automatically categorizes dump opportunities based on quality scores (0-100):
+
+**Metal Tiers:**
+- 🔩 **Iron** (0-10): Basic opportunities
+- 🪙 **Copper** (11-20): Low-tier opportunities
+- 🏅 **Bronze** (21-30): Entry-level opportunities
+- 🥈 **Silver** (31-40): Moderate opportunities
+- 🥇 **Gold** (41-50): Good opportunities
+- ⚪ **Platinum** (51-60): High-quality opportunities
+
+**Gem Tiers:**
+- 💎🔴 **Ruby** (61-70): Premium opportunities
+- 💎🔵 **Sapphire** (71-80): Excellent opportunities
+- 💎🟢 **Emerald** (81-90): Exceptional opportunities
+- 💎 **Diamond** (91-100): Best opportunities
+
+Each server can configure:
+- Discord role mentions per tier
+- Enable/disable alerts per tier
+- Minimum tier threshold for automatic alerts
+
+**For detailed information about how tiers are assigned, scoring algorithms, and filtering, see [TIER_SYSTEM.md](TIER_SYSTEM.md).**
+
 ## Architecture
 
 - **Backend** (`backend/app.py`): Flask API providing JSON endpoints only. All user-facing UI is handled by the Next.js frontend.
 - **Frontend** (`frontend/`): Next.js/React application with Tailwind CSS - the ONLY user interface for dashboards, configuration, and data visualization.
-- **Discord Bot** (`discord-bot/bot.py`): Discord bot with slash commands and notifications
+- **Discord Bot** (`discord-bot/bot.py`): Discord bot with slash commands and tiered notifications
+- **Dump Engine** (`backend/utils/dump_engine.py`): Analyzes price data and assigns tier scores
 - **Cache Updater** (`backend/utils/cache_updater.py`): Updates item cache every 6 hours
 
 **Important:** The Flask backend is strictly API-only. Do NOT add HTML/Jinja/HTMX templates to the backend. All new UI work belongs in the Next.js frontend under `frontend/`.

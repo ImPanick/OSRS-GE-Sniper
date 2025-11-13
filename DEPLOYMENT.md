@@ -254,8 +254,43 @@ ufw allow 5000/tcp
 ### Persistent Data
 Data is stored in:
 - `backend/server_configs/` - Per-server configurations
+- `backend/utils/history.db` - SQLite database (price history, tiers, guild tier settings)
 - `backend/utils/item_cache.json` - Item cache
 - `discord-bot/data/` - Bot data (watchlists, stats)
+
+### Tier System Configuration
+
+The tier system automatically categorizes dump opportunities based on quality scores (0-100). Each server can configure tier settings:
+
+**Tier Structure:**
+- **Metal Tiers:** Iron (0-10), Copper (11-20), Bronze (21-30), Silver (31-40), Gold (41-50), Platinum (51-60)
+- **Gem Tiers:** Ruby (61-70), Sapphire (71-80), Emerald (81-90), Diamond (91-100)
+
+**Configuring Tier Settings:**
+
+1. **Access Tier Configuration Page:**
+   - Navigate to `/config/<guild_id>/tiers` in your web browser
+   - Or use the tier configuration section in the main config page
+
+2. **Configure Per-Tier Settings:**
+   - For each tier, set:
+     - **Discord Role ID**: Role to ping when items of this tier are detected
+     - **Enable Alerts**: Toggle to enable/disable alerts for this tier
+
+3. **Set Minimum Tier Threshold:**
+   - Select the minimum tier for automatic alerts
+   - Only tiers at or above this threshold will trigger Discord notifications
+   - Example: If set to "Gold", only Gold, Platinum, Ruby, Sapphire, Emerald, and Diamond tiers will trigger alerts
+
+4. **Save Settings:**
+   - Click "Save Tier Settings" to apply changes
+   - Settings are stored in the database and persist across restarts
+
+**Example Configuration:**
+- Gold tier → Role ID: `123456789012345678` → Enabled
+- Platinum tier → Role ID: `987654321098765432` → Enabled
+- Minimum tier: Silver
+- Result: Only Silver, Gold, Platinum, and above tiers trigger alerts with their respective role pings
 
 ## Discord Bot Commands
 
@@ -274,9 +309,19 @@ Once the bot is running, you can use these slash commands in Discord:
 ## Web Dashboard
 
 - `/dashboard` - Main dashboard with top flips, dumps, spikes
+  - **Tier Filters**: Filter by tier (Iron, Copper, Bronze, Silver, Gold, Platinum, Ruby, Sapphire, Emerald, Diamond)
+  - **Group Filters**: Filter by group (All Metals, All Gems)
+  - **Special Filters**: Slow Buy, 1GP Dumps, Super (Platinum+)
 - `/volume_tracker` - All GE items with filtering and sorting
 - `/config/<guild_id>` - Per-server configuration
+  - **Tier Configuration**: Configure Discord role mentions per tier and minimum tier threshold
+  - Server information (roles, members, channels, online count)
+  - Role assignment interface
+  - Channel and role selection
+- `/config/<guild_id>/tiers` - Tier configuration page (dedicated tier settings UI)
 - `/admin` - Admin panel (requires admin_key)
+  - Tier system management (score ranges, guild tier settings)
+  - Server management (ban/unban/delete)
 
 ## Monitoring
 

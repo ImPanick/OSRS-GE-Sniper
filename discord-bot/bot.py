@@ -88,6 +88,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True  # Required for role mentions and member access
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+bot.synced = False  # Track if slash commands have been synced
 
 # Tier configuration cache: guild_id -> {tier_name -> {role_id, enabled, group, min_score, max_score, emoji}}
 tier_configs = {}
@@ -95,6 +96,42 @@ tier_configs = {}
 # Deduplication cache: (guild_id, item_id, tier, timestamp_bucket) -> sent
 # timestamp_bucket is rounded to nearest 5 minutes to prevent spam
 alert_dedupe_cache = set()
+
+# Alert settings cache: guild_id -> {min_margin_gp, min_score, enabled_tiers, max_alerts_per_interval}
+alert_settings_cache = {}
+
+async def fetch_alert_settings(guild_id):
+    """Fetch alert settings for a guild from backend"""
+    try:
+        response = requests.get(
+            f"{CONFIG['backend_url']}/api/config/{guild_id}/alerts",
+            timeout=5
+        )
+        if response.status_code == 200:
+            settings = response.json()
+            alert_settings_cache[guild_id] = settings
+            return settings
+        else:
+            # Return defaults if fetch fails
+            defaults = {
+                "min_margin_gp": 0,
+                "min_score": 0,
+                "enabled_tiers": [],
+                "max_alerts_per_interval": 1
+            }
+            alert_settings_cache[guild_id] = defaults
+            return defaults
+    except Exception as e:
+        print(f"[BOT] ⚠ Error fetching alert settings for {guild_id}: {e}")
+        # Return defaults on error
+        defaults = {
+            "min_margin_gp": 0,
+            "min_score": 0,
+            "enabled_tiers": [],
+            "max_alerts_per_interval": 1
+        }
+        alert_settings_cache[guild_id] = defaults
+        return defaults
 
 async def collect_server_info(guild):
     """Collect server information (roles, members, channels, etc.)"""
@@ -192,6 +229,17 @@ async def on_ready():
     print(f"{bot.user} ONLINE")
     for filename in ["flips", "dumps", "spikes", "watchlist", "stats", "config", "nightly", "item_lookup"]:
         await bot.load_extension(f"cogs.{filename}")
+    
+    # Sync slash commands if not already synced
+    if not bot.synced:
+        try:
+            synced = await bot.tree.sync()
+            print(f"[BOT] ✓ Synced {len(synced)} slash command(s)")
+            bot.synced = True
+        except Exception as e:
+            print(f"[BOT] ⚠ Failed to sync slash commands: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Auto-register all existing servers
     print(f"[BOT] Registering {len(bot.guilds)} servers with backend...")
@@ -383,9 +431,15 @@ async def tiered_alerts():
             from utils.notification_router import get_server_config, determine_channel
             server_config = get_server_config(guild_id)
             
+            # Fetch alert settings for this guild
+            alert_settings = await fetch_alert_settings(guild_id)
+            min_margin_gp = alert_settings.get("min_margin_gp", 0)
+            min_score = alert_settings.get("min_score", 0)
+            enabled_tiers_list = alert_settings.get("enabled_tiers", [])
+            max_alerts_per_cycle = alert_settings.get("max_alerts_per_interval", 1)
+            
             # Filter opportunities for this guild
             alerts_sent = 0
-            max_alerts_per_cycle = 1  # Rate limit: one alert per guild per cycle
             
             for opp in dumps:
                 if alerts_sent >= max_alerts_per_cycle:
@@ -397,6 +451,21 @@ async def tiered_alerts():
                 # Skip if tier not enabled or not configured
                 if not tier_setting or not tier_setting.get('enabled', True):
                     continue
+                
+                # Check enabled_tiers filter (if configured)
+                if enabled_tiers_list and len(enabled_tiers_list) > 0:
+                    if tier_name not in enabled_tiers_list:
+                        continue  # Skip if tier not in enabled list
+                
+                # Check min_score filter
+                score = opp.get('score', 0)
+                if score < min_score:
+                    continue  # Skip if score below threshold
+                
+                # Check min_margin_gp filter (for dumps, check realistic_profit or max_profit_4h)
+                realistic_profit = opp.get('realistic_profit', 0) or opp.get('max_profit_4h', 0)
+                if realistic_profit < min_margin_gp:
+                    continue  # Skip if profit margin below threshold
                 
                 # Check min-tier restriction (if configured)
                 if min_tier_name:
@@ -542,8 +611,25 @@ async def poll_alerts():
         # Import router
         from utils.notification_router import broadcast_to_all_servers
         
-        # Broadcast spikes
-        if spikes:
+        # Filter spikes by alert settings for each guild
+        filtered_spikes = []
+        for spike in spikes:
+            # Check if any guild would accept this spike
+            spike_profit = spike.get('profit', 0) or (spike.get('sell', 0) - spike.get('buy', 0))
+            
+            # Check each guild's settings
+            for guild in bot.guilds:
+                guild_id = str(guild.id)
+                alert_settings = await fetch_alert_settings(guild_id)
+                min_margin_gp = alert_settings.get("min_margin_gp", 0)
+                
+                # If this spike meets at least one guild's threshold, include it
+                if spike_profit >= min_margin_gp:
+                    filtered_spikes.append(spike)
+                    break  # Only need to match one guild
+        
+        # Broadcast filtered spikes
+        if filtered_spikes:
             from utils.item_utils import get_item_thumbnail_url, get_item_wiki_url
             
             def spike_embed(item):
@@ -649,7 +735,7 @@ async def poll_alerts():
                 embed.timestamp = datetime.now()
                 
                 return embed
-            await broadcast_to_all_servers(bot, spikes, "spike", spike_embed)
+            await broadcast_to_all_servers(bot, filtered_spikes, "spike", spike_embed)
         
     except Exception as e:
         print(f"[ERROR] poll_alerts: {e}")

@@ -90,6 +90,15 @@ def init_db():
                           min_tier_name TEXT,
                           FOREIGN KEY (min_tier_name) REFERENCES tiers(name))''')
             
+            # Alert settings table for per-guild alert thresholds
+            c.execute('''CREATE TABLE IF NOT EXISTS guild_alert_settings
+                         (guild_id TEXT PRIMARY KEY,
+                          min_margin_gp INTEGER DEFAULT 0,
+                          min_score INTEGER DEFAULT 0,
+                          enabled_tiers TEXT DEFAULT '[]',
+                          max_alerts_per_interval INTEGER DEFAULT 1,
+                          FOREIGN KEY (guild_id) REFERENCES guild_config(guild_id))''')
+            
             # Seed tiers if table is empty
             seed_tiers(conn)
     except sqlite3.Error as e:
@@ -392,4 +401,97 @@ def update_guild_config(guild_id, min_tier_name=None):
             return True
     except sqlite3.Error as e:
         print(f"[ERROR] Failed to update guild config: {e}")
+        return False
+
+def get_guild_alert_settings(guild_id):
+    """Get alert settings for a specific guild"""
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("""SELECT min_margin_gp, min_score, enabled_tiers, max_alerts_per_interval
+                     FROM guild_alert_settings
+                     WHERE guild_id = ?""", (guild_id,))
+        row = c.fetchone()
+        
+        if row:
+            import json
+            enabled_tiers = json.loads(row[2]) if row[2] else []
+            return {
+                "min_margin_gp": row[0] if row[0] is not None else 0,
+                "min_score": row[1] if row[1] is not None else 0,
+                "enabled_tiers": enabled_tiers,
+                "max_alerts_per_interval": row[3] if row[3] is not None else 1
+            }
+        else:
+            # Return defaults if no settings exist
+            return {
+                "min_margin_gp": 0,
+                "min_score": 0,
+                "enabled_tiers": [],
+                "max_alerts_per_interval": 1
+            }
+    except sqlite3.Error as e:
+        print(f"[ERROR] Failed to get guild alert settings: {e}")
+        return {
+            "min_margin_gp": 0,
+            "min_score": 0,
+            "enabled_tiers": [],
+            "max_alerts_per_interval": 1
+        }
+    except Exception as e:
+        print(f"[ERROR] Unexpected error getting alert settings: {e}")
+        return {
+            "min_margin_gp": 0,
+            "min_score": 0,
+            "enabled_tiers": [],
+            "max_alerts_per_interval": 1
+        }
+
+def update_guild_alert_settings(guild_id, min_margin_gp=None, min_score=None, enabled_tiers=None, max_alerts_per_interval=None):
+    """Update or create guild alert settings"""
+    try:
+        import json
+        with db_transaction() as conn:
+            c = conn.cursor()
+            # Check if settings exist
+            c.execute("SELECT guild_id FROM guild_alert_settings WHERE guild_id = ?", (guild_id,))
+            existing = c.fetchone()
+            
+            if existing:
+                # Update existing
+                updates = []
+                params = []
+                if min_margin_gp is not None:
+                    updates.append("min_margin_gp = ?")
+                    params.append(min_margin_gp)
+                if min_score is not None:
+                    updates.append("min_score = ?")
+                    params.append(min_score)
+                if enabled_tiers is not None:
+                    updates.append("enabled_tiers = ?")
+                    params.append(json.dumps(enabled_tiers))
+                if max_alerts_per_interval is not None:
+                    updates.append("max_alerts_per_interval = ?")
+                    params.append(max_alerts_per_interval)
+                
+                if updates:
+                    params.append(guild_id)
+                    c.execute(f"UPDATE guild_alert_settings SET {', '.join(updates)} WHERE guild_id = ?", params)
+            else:
+                # Insert new with provided values or defaults
+                min_margin_gp_val = min_margin_gp if min_margin_gp is not None else 0
+                min_score_val = min_score if min_score is not None else 0
+                enabled_tiers_val = json.dumps(enabled_tiers) if enabled_tiers is not None else '[]'
+                max_alerts_val = max_alerts_per_interval if max_alerts_per_interval is not None else 1
+                
+                c.execute("""INSERT INTO guild_alert_settings 
+                             (guild_id, min_margin_gp, min_score, enabled_tiers, max_alerts_per_interval)
+                             VALUES (?, ?, ?, ?, ?)""",
+                         (guild_id, min_margin_gp_val, min_score_val, enabled_tiers_val, max_alerts_val))
+            return True
+    except sqlite3.Error as e:
+        print(f"[ERROR] Failed to update guild alert settings: {e}")
+        return False
+    except Exception as e:
+        print(f"[ERROR] Unexpected error updating alert settings: {e}")
         return False

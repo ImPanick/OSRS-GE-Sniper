@@ -58,6 +58,10 @@ Each Discord server (guild) has its own configuration file:
   - `cheap_flips`, `medium_flips`, `expensive_flips`, etc.
 - **Roles:** Which roles to ping for different risk/quality levels
   - `risk_low`, `risk_medium`, `risk_high`, `quality_nuclear`, etc.
+- **Tier Settings:** Per-tier Discord role mentions and enable/disable flags
+  - Configure role mentions for each tier (Iron through Diamond)
+  - Enable/disable alerts per tier
+  - Set minimum tier threshold for automatic alerts
 - **Thresholds:** Custom filtering per server
 
 ### 4. **Web UI Configuration**
@@ -73,6 +77,10 @@ Users access: `http://your-server:3000/config/{guild_id}?token={admin_token}`
 **What users can configure:**
 - Which channels receive which types of alerts
 - Which roles get pinged for different risk levels
+- **Tier system settings:**
+  - Discord role mentions per tier (Iron, Copper, Bronze, Silver, Gold, Platinum, Ruby, Sapphire, Emerald, Diamond)
+  - Enable/disable alerts per tier
+  - Minimum tier threshold for automatic alerts
 - Quality thresholds (nuclear dumps, god-tier, etc.)
 - Enable/disable notifications
 
@@ -104,25 +112,48 @@ Users access: `http://your-server:3000/config/{guild_id}?token={admin_token}`
 └─────────────────┘
 ```
 
-### 6. **Notification Routing**
+### 6. **Tier System**
+
+The tier system automatically categorizes dump opportunities based on quality scores (0-100):
+
+**Tier Structure:**
+- **Metal Tiers:** Iron (0-10), Copper (11-20), Bronze (21-30), Silver (31-40), Gold (41-50), Platinum (51-60)
+- **Gem Tiers:** Ruby (61-70), Sapphire (71-80), Emerald (81-90), Diamond (91-100)
+
+**How It Works:**
+1. **Dump Engine** analyzes price data and calculates quality scores
+2. **Tier Assignment** automatically assigns items to tiers based on score
+3. **Per-Server Configuration** allows each server to:
+   - Set Discord role mentions per tier
+   - Enable/disable alerts per tier
+   - Set minimum tier threshold (only tiers at or above threshold trigger alerts)
+4. **Database Storage** stores tier definitions and guild tier settings in SQLite
+
+**Tier Configuration:**
+- Tier definitions stored in `tiers` table (score ranges, emoji, group)
+- Guild tier settings stored in `guild_tier_settings` table (role_id, enabled per tier)
+- Guild config stores `min_tier_name` (minimum tier for alerts)
+
+### 7. **Notification Routing**
 
 When the bot finds a dump/spike/flip:
 
-1. **Bot polls backend** → Gets list of items
+1. **Bot polls backend** → Gets list of items with tier information
 2. **For each item:**
    - Bot gets list of all servers it's in
    - For each server:
-     - Fetches that server's config from backend API
+     - Fetches that server's config from backend API (including tier settings)
+     - Checks if item's tier meets minimum tier threshold
      - Determines which channel to use (based on item type/price)
-     - Determines which roles to ping (based on risk/quality)
-     - Sends embed to that channel with role mentions
+     - Determines which roles to ping (based on tier settings or risk/quality)
+     - Sends embed to that channel with tier-based role mentions
 
 **Example:**
-- Item: "Dragon bones" - 15% dump, low risk, high volume
-- Server A config: `cheap_flips` channel, ping `@LowRisk` role
-- Server B config: `medium_flips` channel, ping `@Deals` role
-- Bot sends to Server A's `cheap_flips` with `@LowRisk` ping
-- Bot sends to Server B's `medium_flips` with `@Deals` ping
+- Item: "Dragon bones" - 15% dump, Gold tier (score 45), low risk, high volume
+- Server A config: `cheap_flips` channel, Gold tier → ping `@GoldAlerts` role, min_tier = Silver
+- Server B config: `medium_flips` channel, Gold tier → ping `@Deals` role, min_tier = Platinum
+- Bot sends to Server A's `cheap_flips` with `@GoldAlerts` ping (Gold ≥ Silver threshold)
+- Bot skips Server B (Gold < Platinum threshold)
 
 ## 🔧 Setup Process
 
@@ -193,20 +224,27 @@ OSRS-GE-Sniper/
 ├── backend/
 │   ├── app.py                     ← Flask API (JSON endpoints only, no HTML/UI)
 │   ├── routes_*.py                ← API route modules (JSON-only)
+│   │   ├── routes_api_dumps.py    ← Dump API with tier filtering
+│   │   ├── routes_admin.py        ← Admin API including tier management
+│   │   └── ...
+│   ├── utils/
+│   │   ├── dump_engine.py         ← Dump analysis and tier assignment
+│   │   ├── database.py            ← Database with tier tables
+│   │   └── ...
 │   ├── server_configs/            ← Per-server configs (auto-created)
 │   │   ├── 123456789.json         ← Server A's config
 │   │   ├── 987654321.json         ← Server B's config
 │   │   └── ...
 │   └── config_manager.py          ← Manages per-server configs
 ├── discord-bot/
-│   ├── bot.py                     ← Your bot (polls backend, routes notifications)
+│   ├── bot.py                     ← Your bot (polls backend, routes tiered notifications)
 │   └── utils/
-│       └── notification_router.py ← Routes alerts to servers
+│       └── notification_router.py ← Routes alerts to servers with tier support
 └── frontend/
     ├── app/                        ← Next.js pages (ALL user-facing UI)
-    │   ├── dashboard/              ← Dashboard page
-    │   ├── config/[guildId]/      ← Server configuration UI
-    │   ├── admin/                  ← Admin panel
+    │   ├── dashboard/              ← Dashboard page with tier filters
+    │   ├── config/[guildId]/      ← Server configuration UI with tier settings
+    │   ├── admin/                  ← Admin panel with tier management
     │   └── ...
     └── components/                ← React components
 ```
@@ -218,9 +256,12 @@ OSRS-GE-Sniper/
 **What's Working:**
 - ✅ Multi-tenant architecture (per-server configs)
 - ✅ Backend API serving data and configs
-- ✅ Notification routing system
-- ✅ Web UI for configuration
-- ✅ Role ping system based on risk/quality
+- ✅ Tier system with 10-tier quality scoring (Iron → Diamond)
+- ✅ Tier-based notification routing with per-server tier settings
+- ✅ Advanced API filtering (tier, group, special flags)
+- ✅ Web UI for configuration including tier settings
+- ✅ Role ping system based on tier/quality
+- ✅ Dashboard tier and group filters
 
 **What Needs Fixing:**
 - ❌ Bot token in `config.json` - needs to be valid
