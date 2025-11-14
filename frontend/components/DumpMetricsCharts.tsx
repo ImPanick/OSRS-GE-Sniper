@@ -17,6 +17,8 @@ export type DumpItem = {
   high: number | null | undefined
   low: number | null | undefined
   max_buy_4h: number | null | undefined
+  margin_gp?: number | null
+  max_profit_gp?: number | null
   score?: number | null
 }
 
@@ -82,11 +84,9 @@ export function DumpMetricsCharts({ items }: DumpMetricsChartsProps) {
     // Calculate metrics and sort by score (or margin if no score)
     const processed = items
       .map((item) => {
-        const high = item.high ?? 0
-        const low = item.low ?? 0
-        const margin = Math.max(0, high - low)
-        const maxBuy4h = item.max_buy_4h ?? 0
-        const maxProfit4h = margin * maxBuy4h
+        // Use API-provided values if available, otherwise calculate
+        const margin = item.margin_gp ?? (item.high && item.low ? Math.max(0, item.high - item.low) : 0)
+        const maxProfit4h = item.max_profit_gp ?? (margin && item.max_buy_4h ? margin * item.max_buy_4h : 0)
 
         return {
           name: truncateName(item.name),

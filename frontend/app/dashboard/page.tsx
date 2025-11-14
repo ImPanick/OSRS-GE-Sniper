@@ -45,7 +45,7 @@ export default function DashboardPage() {
       setLoading(true)
       
       // Build query params from selected filter
-      const params: any = {}
+      const params: any = { guild_id: guildId }
       if (selectedFilter?.tier) {
         params.tier = selectedFilter.tier
       } else if (selectedFilter?.group) {
@@ -111,6 +111,8 @@ export default function DashboardPage() {
       high: d.high,
       low: d.low,
       max_buy_4h: d.max_buy_4h,
+      margin_gp: d.margin_gp,
+      max_profit_gp: d.max_profit_gp,
       score: d.score,
     }))
   }, [dumps])

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { apiClient } from '@/lib/api'
 import { Card } from '@/components/Card'
-import { Lock, RefreshCw, Download, CheckCircle, XCircle, AlertCircle, Database } from 'lucide-react'
+import { Lock, RefreshCw, Download, CheckCircle, XCircle, AlertCircle, Database, Settings } from 'lucide-react'
 
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false)
@@ -13,6 +13,19 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false)
   const [cacheLoading, setCacheLoading] = useState(false)
   const [cacheResult, setCacheResult] = useState<any>(null)
+  const [selectedGuildId, setSelectedGuildId] = useState<string>('')
+  const [alertSettings, setAlertSettings] = useState({
+    min_score: 0,
+    min_margin_gp: 0,
+    enabled_tiers: [] as string[],
+    alert_channel_id: '',
+    role_ids_per_tier: {} as Record<string, string>,
+  })
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
+  const [settingsSuccess, setSettingsSuccess] = useState(false)
+
+  const VALID_TIERS = ['iron', 'copper', 'bronze', 'silver', 'gold', 'platinum', 'ruby', 'sapphire', 'emerald', 'diamond']
 
   const authenticate = () => {
     if (!adminKey) {
@@ -150,6 +163,53 @@ export default function AdminPage() {
     }
   }
 
+  const loadAlertSettings = async (guildId: string) => {
+    if (!guildId) return
+    setSettingsLoading(true)
+    setSettingsError(null)
+    try {
+      const config = await apiClient.getConfig(guildId)
+      setAlertSettings({
+        min_score: config.min_score ?? 0,
+        min_margin_gp: config.min_margin_gp ?? 0,
+        enabled_tiers: config.enabled_tiers ?? [],
+        alert_channel_id: config.alert_channel_id ?? '',
+        role_ids_per_tier: config.role_ids_per_tier ?? {},
+      })
+    } catch (error: any) {
+      console.error('Failed to load config:', error)
+      setSettingsError(error.response?.data?.error || 'Failed to load config')
+    } finally {
+      setSettingsLoading(false)
+    }
+  }
+
+  const saveAlertSettings = async () => {
+    if (!selectedGuildId) {
+      setSettingsError('Please select a server first')
+      return
+    }
+    setSettingsLoading(true)
+    setSettingsError(null)
+    setSettingsSuccess(false)
+    try {
+      await apiClient.saveConfig(selectedGuildId, {
+        min_score: alertSettings.min_score,
+        min_margin_gp: alertSettings.min_margin_gp,
+        enabled_tiers: alertSettings.enabled_tiers,
+        alert_channel_id: alertSettings.alert_channel_id || undefined,
+        role_ids_per_tier: alertSettings.role_ids_per_tier,
+      })
+      setSettingsSuccess(true)
+      setTimeout(() => setSettingsSuccess(false), 3000)
+    } catch (error: any) {
+      console.error('Failed to save config:', error)
+      setSettingsError(error.response?.data?.error || 'Failed to save config')
+    } finally {
+      setSettingsLoading(false)
+    }
+  }
+
   useEffect(() => {
     const savedKey = localStorage.getItem('admin_key')
     if (savedKey) {
@@ -158,6 +218,12 @@ export default function AdminPage() {
       loadData()
     }
   }, [])
+
+  useEffect(() => {
+    if (selectedGuildId) {
+      loadAlertSettings(selectedGuildId)
+    }
+  }, [selectedGuildId])
 
   if (!authenticated) {
     return (
@@ -380,6 +446,163 @@ export default function AdminPage() {
                 </tbody>
               </table>
             </div>
+          )}
+        </div>
+      </Card>
+
+      <Card title="Alert Settings Configuration" icon={<Settings className="w-5 h-5" />}>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-dark-300 mb-2">
+              Select Server (Guild ID)
+            </label>
+            <select
+              value={selectedGuildId}
+              onChange={(e) => setSelectedGuildId(e.target.value)}
+              className="w-full px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">-- Select a server --</option>
+              {servers.map((server) => (
+                <option key={server.guild_id} value={server.guild_id}>
+                  {server.guild_id} {server.banned ? '(BANNED)' : server.enabled ? '(ENABLED)' : '(DISABLED)'}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedGuildId && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-dark-300 mb-2">
+                    Min Score (0-100)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={alertSettings.min_score}
+                    onChange={(e) => setAlertSettings({ ...alertSettings, min_score: parseInt(e.target.value) || 0 })}
+                    className="w-full px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-dark-300 mb-2">
+                    Min Margin (GP)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={alertSettings.min_margin_gp}
+                    onChange={(e) => setAlertSettings({ ...alertSettings, min_margin_gp: parseInt(e.target.value) || 0 })}
+                    className="w-full px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-300 mb-2">
+                  Alert Channel ID
+                </label>
+                <input
+                  type="text"
+                  value={alertSettings.alert_channel_id}
+                  onChange={(e) => setAlertSettings({ ...alertSettings, alert_channel_id: e.target.value })}
+                  placeholder="Discord channel ID (optional)"
+                  className="w-full px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-300 mb-2">
+                  Enabled Tiers
+                </label>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                  {VALID_TIERS.map((tier) => (
+                    <label key={tier} className="flex items-center gap-2 p-2 bg-dark-800 rounded border border-dark-700 cursor-pointer hover:bg-dark-700">
+                      <input
+                        type="checkbox"
+                        checked={alertSettings.enabled_tiers.includes(tier)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setAlertSettings({
+                              ...alertSettings,
+                              enabled_tiers: [...alertSettings.enabled_tiers, tier],
+                            })
+                          } else {
+                            setAlertSettings({
+                              ...alertSettings,
+                              enabled_tiers: alertSettings.enabled_tiers.filter((t) => t !== tier),
+                            })
+                          }
+                        }}
+                        className="w-4 h-4 text-primary-600 bg-dark-700 border-dark-600 rounded focus:ring-primary-500"
+                      />
+                      <span className="text-sm text-white capitalize">{tier}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-300 mb-2">
+                  Role IDs per Tier (JSON format or individual inputs)
+                </label>
+                <div className="space-y-2">
+                  {VALID_TIERS.map((tier) => (
+                    <div key={tier} className="flex items-center gap-2">
+                      <label className="text-sm text-dark-400 w-24 capitalize">{tier}:</label>
+                      <input
+                        type="text"
+                        value={alertSettings.role_ids_per_tier[tier] || ''}
+                        onChange={(e) => {
+                          setAlertSettings({
+                            ...alertSettings,
+                            role_ids_per_tier: {
+                              ...alertSettings.role_ids_per_tier,
+                              [tier]: e.target.value,
+                            },
+                          })
+                        }}
+                        placeholder="Discord role ID (optional)"
+                        className="flex-1 px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {settingsError && (
+                <div className="p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-sm">
+                  {settingsError}
+                </div>
+              )}
+
+              {settingsSuccess && (
+                <div className="p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 text-sm flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  Settings saved successfully!
+                </div>
+              )}
+
+              <button
+                onClick={saveAlertSettings}
+                disabled={settingsLoading}
+                className="w-full px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {settingsLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Settings className="w-4 h-4" />
+                    Save Alert Settings
+                  </>
+                )}
+              </button>
+            </>
           )}
         </div>
       </Card>

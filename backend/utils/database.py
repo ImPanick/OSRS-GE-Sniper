@@ -88,7 +88,14 @@ def init_db():
             c.execute('''CREATE TABLE IF NOT EXISTS guild_config
                          (guild_id TEXT PRIMARY KEY,
                           min_tier_name TEXT,
+                          alert_channel_id TEXT,
                           FOREIGN KEY (min_tier_name) REFERENCES tiers(name))''')
+            
+            # Add alert_channel_id column if it doesn't exist (migration)
+            try:
+                c.execute('ALTER TABLE guild_config ADD COLUMN alert_channel_id TEXT')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
             
             # Alert settings table for per-guild alert thresholds
             c.execute('''CREATE TABLE IF NOT EXISTS guild_alert_settings
@@ -371,18 +378,23 @@ def update_guild_tier_setting(guild_id, tier_name, role_id=None, enabled=None):
         return False
 
 def get_guild_config(guild_id):
-    """Get guild configuration (min_tier_name)"""
+    """Get guild configuration (min_tier_name, alert_channel_id)"""
     try:
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT min_tier_name FROM guild_config WHERE guild_id = ?", (guild_id,))
+        c.execute("SELECT min_tier_name, alert_channel_id FROM guild_config WHERE guild_id = ?", (guild_id,))
         row = c.fetchone()
-        return {"min_tier_name": row[0] if row else None}
+        if row:
+            return {
+                "min_tier_name": row[0],
+                "alert_channel_id": row[1]
+            }
+        return {"min_tier_name": None, "alert_channel_id": None}
     except sqlite3.Error as e:
         print(f"[ERROR] Failed to get guild config: {e}")
-        return {"min_tier_name": None}
+        return {"min_tier_name": None, "alert_channel_id": None}
 
-def update_guild_config(guild_id, min_tier_name=None):
+def update_guild_config(guild_id, min_tier_name=None, alert_channel_id=None):
     """Update guild configuration"""
     try:
         with db_transaction() as conn:
@@ -392,12 +404,21 @@ def update_guild_config(guild_id, min_tier_name=None):
             existing = c.fetchone()
             
             if existing:
+                updates = []
+                params = []
                 if min_tier_name is not None:
-                    c.execute("UPDATE guild_config SET min_tier_name = ? WHERE guild_id = ?",
-                             (min_tier_name, guild_id))
+                    updates.append("min_tier_name = ?")
+                    params.append(min_tier_name)
+                if alert_channel_id is not None:
+                    updates.append("alert_channel_id = ?")
+                    params.append(alert_channel_id)
+                
+                if updates:
+                    params.append(guild_id)
+                    c.execute(f"UPDATE guild_config SET {', '.join(updates)} WHERE guild_id = ?", params)
             else:
-                c.execute("INSERT INTO guild_config (guild_id, min_tier_name) VALUES (?, ?)",
-                         (guild_id, min_tier_name))
+                c.execute("INSERT INTO guild_config (guild_id, min_tier_name, alert_channel_id) VALUES (?, ?, ?)",
+                         (guild_id, min_tier_name, alert_channel_id))
             return True
     except sqlite3.Error as e:
         print(f"[ERROR] Failed to update guild config: {e}")
@@ -495,3 +516,46 @@ def update_guild_alert_settings(guild_id, min_margin_gp=None, min_score=None, en
     except Exception as e:
         print(f"[ERROR] Unexpected error updating alert settings: {e}")
         return False
+
+def get_unified_guild_config(guild_id):
+    """Get unified guild configuration combining all settings"""
+    try:
+        # Get base config
+        guild_config = get_guild_config(guild_id)
+        
+        # Get alert settings
+        alert_settings = get_guild_alert_settings(guild_id)
+        
+        # Get tier settings
+        tier_settings = get_guild_tier_settings(guild_id)
+        
+        # Build role_ids_per_tier mapping
+        role_ids_per_tier = {}
+        for tier_name, setting in tier_settings.items():
+            if setting.get("role_id"):
+                role_ids_per_tier[tier_name] = setting.get("role_id")
+        
+        # Combine into unified config
+        unified = {
+            "alert_channel_id": guild_config.get("alert_channel_id"),
+            "enabled_tiers": alert_settings.get("enabled_tiers", []),
+            "min_score": alert_settings.get("min_score", 0),
+            "min_margin_gp": alert_settings.get("min_margin_gp", 0),
+            "role_ids_per_tier": role_ids_per_tier,
+            "min_tier_name": guild_config.get("min_tier_name"),
+            "max_alerts_per_interval": alert_settings.get("max_alerts_per_interval", 1)
+        }
+        
+        return unified
+    except Exception as e:
+        print(f"[ERROR] Failed to get unified guild config: {e}")
+        # Return defaults
+        return {
+            "alert_channel_id": None,
+            "enabled_tiers": [],
+            "min_score": 0,
+            "min_margin_gp": 0,
+            "role_ids_per_tier": {},
+            "min_tier_name": None,
+            "max_alerts_per_interval": 1
+        }

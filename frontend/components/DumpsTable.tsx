@@ -12,7 +12,7 @@ interface DumpsTableProps {
   guildId?: string
 }
 
-type SortKey = 'score' | 'drop_pct' | 'vol_spike_pct' | 'oversupply_pct' | 'name' | 'high' | 'low' | 'max_buy_4h'
+type SortKey = 'score' | 'drop_pct' | 'vol_spike_pct' | 'oversupply_pct' | 'name' | 'high' | 'low' | 'max_buy_4h' | 'margin_gp' | 'max_profit_gp'
 type SortDirection = 'asc' | 'desc' | null
 
 export function DumpsTable({ dumps, watchedItemIds = new Set(), onWatchToggle, guildId = 'default' }: DumpsTableProps) {
@@ -121,7 +121,9 @@ export function DumpsTable({ dumps, watchedItemIds = new Set(), onWatchToggle, g
             <th className="px-4 py-3 text-left text-xs font-semibold text-dark-400 uppercase tracking-wider">
               High / Low
             </th>
+            <SortableHeader key="margin_gp" label="Margin (GP)" />
             <SortableHeader key="max_buy_4h" label="Max Buy / 4h" />
+            <SortableHeader key="max_profit_gp" label="Max Profit (GP)" />
           </tr>
         </thead>
         <tbody className="divide-y divide-dark-700">
@@ -200,8 +202,14 @@ export function DumpsTable({ dumps, watchedItemIds = new Set(), onWatchToggle, g
                     <span className="text-red-400">/ {formatGP(dump.low)}</span>
                   </div>
                 </td>
+                <td className="px-4 py-3 text-sm text-green-400 font-semibold">
+                  {formatGP(dump.margin_gp ?? (dump.high && dump.low ? dump.high - dump.low : null))}
+                </td>
                 <td className="px-4 py-3 text-sm text-dark-200 font-semibold">
                   {formatGP(dump.max_buy_4h ?? dump.limit)}
+                </td>
+                <td className="px-4 py-3 text-sm text-primary-400 font-semibold">
+                  {formatGP(dump.max_profit_gp ?? (dump.margin_gp && dump.max_buy_4h ? dump.margin_gp * dump.max_buy_4h : null))}
                 </td>
               </tr>
             )

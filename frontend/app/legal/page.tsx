@@ -1,175 +1,135 @@
 'use client'
 
-import Link from 'next/link'
-import { FileText, Shield, AlertTriangle, Scale, ArrowLeft } from 'lucide-react'
 import { Card } from '@/components/Card'
+import { Scale, AlertTriangle, Shield, FileText } from 'lucide-react'
 
 export default function LegalPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-4 mb-8">
-        <Link
-          href="/"
-          className="flex items-center gap-2 text-dark-400 hover:text-primary-400 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Back to Dashboard</span>
-        </Link>
-      </div>
-
       <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold bg-gradient-to-r from-primary-400 to-primary-600 bg-clip-text text-transparent mb-2">
-          Legal & License
+        <h1 className="text-4xl font-bold text-white mb-2 flex items-center justify-center gap-3">
+          <Scale className="w-10 h-10 text-primary-400" />
+          Legal & License Information
         </h1>
         <p className="text-dark-400">
-          Important information about usage, licensing, and disclaimers
+          Important legal information about OSRS-GE-Sniper
         </p>
       </div>
 
-      <Card
-        title="Intellectual Property"
-        icon={<Shield className="w-5 h-5" />}
-      >
+      <Card title="Intellectual Property & Trademarks" icon={<Shield className="w-5 h-5" />}>
         <div className="space-y-4 text-dark-300">
           <p>
-            <strong className="text-white">RuneScape</strong>, <strong className="text-white">Old School RuneScape</strong>, and all related trademarks, logos, and intellectual property are owned by <strong className="text-white">Jagex Ltd</strong>.
+            <strong className="text-white">RuneScape®</strong>, <strong className="text-white">Old School RuneScape®</strong>, 
+            <strong className="text-white"> OSRS®</strong>, the <strong className="text-white">Grand Exchange</strong>, 
+            in-game items, names, and all related terms are the exclusive intellectual property of <strong className="text-white">Jagex Ltd.</strong>
           </p>
           <p>
-            This project uses publicly available data from the OSRS Grand Exchange API and is not affiliated with, endorsed by, or connected to Jagex Ltd in any way.
-          </p>
-        </div>
-      </Card>
-
-      <Card
-        title="Non-Affiliation Disclaimer"
-        icon={<AlertTriangle className="w-5 h-5" />}
-      >
-        <div className="space-y-4 text-dark-300">
-          <p>
-            <strong className="text-white">OSRS-GE-Sniper</strong> is an independent, community-developed tool. This project is <strong className="text-white">not affiliated with, endorsed by, or sponsored by Jagex Ltd</strong>.
+            This project claims <strong className="text-white">ZERO ownership</strong> of any Jagex intellectual property.
           </p>
           <p>
-            Jagex Ltd does not endorse or support this tool. Any use of this tool is at your own discretion and risk.
+            This project contains:
           </p>
-        </div>
-      </Card>
-
-      <Card
-        title="Intended Use & Prohibited Activities"
-        icon={<Scale className="w-5 h-5" />}
-      >
-        <div className="space-y-4 text-dark-300">
-          <p>
-            This tool is designed to help players analyze Grand Exchange market data and make informed trading decisions.
-          </p>
-          <div className="bg-dark-900/50 border border-dark-700 rounded-lg p-4 space-y-2">
-            <p className="text-white font-semibold">The following activities are strictly prohibited:</p>
-            <ul className="list-disc list-inside space-y-1 text-dark-300 ml-2">
-              <li><strong className="text-white">Automation/Botting:</strong> Do not use this tool or any automation to interact with the game client or perform automated actions in-game.</li>
-              <li><strong className="text-white">Macroing:</strong> Do not use macros, scripts, or any third-party software to automate gameplay.</li>
-              <li><strong className="text-white">Real Money Trading (RMT):</strong> Do not use this tool to facilitate or engage in real money trading of in-game items or currency.</li>
-              <li><strong className="text-white">Violation of Terms of Service:</strong> Any use of this tool that violates Jagex&#39;s Terms of Service or Rules of Conduct is strictly prohibited.</li>
-            </ul>
-          </div>
-          <p className="text-sm text-dark-400 italic">
-            Violation of these rules may result in your account being banned by Jagex. The developers of this tool are not responsible for any account actions taken by Jagex.
-          </p>
-        </div>
-      </Card>
-
-      <Card
-        title="Use at Your Own Risk"
-        icon={<AlertTriangle className="w-5 h-5" />}
-      >
-        <div className="space-y-4 text-dark-300">
-          <p>
-            This tool is provided <strong className="text-white">&#34;AS IS&#34;</strong>, without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and noninfringement.
-          </p>
-          <p>
-            <strong className="text-white">You assume all responsibility</strong> for any consequences resulting from the use of this tool, including but not limited to:
-          </p>
-          <ul className="list-disc list-inside space-y-1 ml-2">
-            <li>Account bans or restrictions imposed by Jagex</li>
-            <li>Financial losses from trading decisions</li>
-            <li>Data loss or corruption</li>
-            <li>Any other damages or losses</li>
+          <ul className="list-disc list-inside space-y-2 ml-4">
+            <li>No Jagex assets</li>
+            <li>No Jagex game files</li>
+            <li>No proprietary RuneScape data</li>
+            <li>Only public metadata provided via community APIs</li>
           </ul>
           <p>
-            The developers and contributors of this project shall not be liable for any direct, indirect, incidental, special, consequential, or punitive damages arising out of your use of this tool.
+            All references to RuneScape are for compatibility, analysis, and educational purposes under Fair Use.
           </p>
         </div>
       </Card>
 
-      <Card
-        title="Agreement"
-        icon={<FileText className="w-5 h-5" />}
-      >
+      <Card title="Non-Affiliation" icon={<AlertTriangle className="w-5 h-5" />}>
         <div className="space-y-4 text-dark-300">
-          <p>
-            By using this tool, you acknowledge that you have read, understood, and agree to be bound by these terms and disclaimers.
-          </p>
-          <p>
-            If you do not agree with any part of these terms, you must discontinue use of this tool immediately.
-          </p>
-        </div>
-      </Card>
-
-      <Card
-        title="Full Legal Documents"
-        icon={<FileText className="w-5 h-5" />}
-      >
-        <div className="space-y-4 text-dark-300">
-          <p>
-            For complete legal information, please refer to the following documents in the repository:
-          </p>
-          <ul className="space-y-2">
-            <li>
-              <a
-                href="https://github.com/ImPanick/OSRS-GE-Sniper/blob/main/LICENSE.md"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary-400 hover:text-primary-300 underline"
-              >
-                LICENSE
-              </a>
-              {' '}— Software license (MIT License)
-            </li>
-            <li>
-              <a
-                href="https://github.com/ImPanick/OSRS-GE-Sniper/blob/main/LEGAL.md"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary-400 hover:text-primary-300 underline"
-              >
-                LEGAL.md
-              </a>
-              {' '}— Complete legal disclaimers and information
-            </li>
-            <li>
-              <a
-                href="https://github.com/ImPanick/OSRS-GE-Sniper/blob/main/TERMS_OF_SERVICE.md"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary-400 hover:text-primary-300 underline"
-              >
-                TERMS_OF_SERVICE.md
-              </a>
-              {' '}— Terms of service and usage agreement
-            </li>
+          <p>This project:</p>
+          <ul className="list-disc list-inside space-y-2 ml-4">
+            <li>Is <strong className="text-white">not affiliated</strong> with Jagex Ltd.</li>
+            <li>Is <strong className="text-white">not endorsed</strong> by the RuneScape team.</li>
+            <li>Is <strong className="text-white">not an official</strong> Jagex product.</li>
+            <li>Is independently developed by the project maintainers.</li>
           </ul>
         </div>
       </Card>
 
-      <div className="text-center pt-8 pb-4">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 px-6 py-3 bg-primary-500/20 text-primary-400 border border-primary-500/30 rounded-lg hover:bg-primary-500/30 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Dashboard
-        </Link>
+      <Card title="Data Sources" icon={<FileText className="w-5 h-5" />}>
+        <div className="space-y-4 text-dark-300">
+          <p>
+            This tool uses <strong className="text-white">publicly available price data</strong> from:
+          </p>
+          <ul className="list-disc list-inside space-y-2 ml-4">
+            <li>prices.runescape.wiki API (community-maintained)</li>
+            <li>OSRS Wiki (public data)</li>
+            <li>Other publicly accessible APIs</li>
+          </ul>
+          <p>
+            All data is obtained through legitimate, public APIs. No game client interaction, packet modification, 
+            or unauthorized data access is performed.
+          </p>
+        </div>
+      </Card>
+
+      <Card title="Terms of Use & Disclaimer" icon={<Scale className="w-5 h-5" />}>
+        <div className="space-y-4 text-dark-300">
+          <p>
+            <strong className="text-white">By using this software, you agree to the following:</strong>
+          </p>
+          <ul className="list-disc list-inside space-y-2 ml-4">
+            <li>You assume <strong className="text-white">100% responsibility</strong> for your actions</li>
+            <li>The software is provided <strong className="text-white">AS IS</strong> with <strong className="text-white">NO WARRANTY</strong></li>
+            <li>The authors are <strong className="text-white">NOT liable</strong> for:
+              <ul className="list-circle list-inside ml-6 mt-2 space-y-1">
+                <li>Account bans or suspensions</li>
+                <li>Game losses or penalties</li>
+                <li>Financial damages</li>
+                <li>Misuse of the software</li>
+                <li>Violations of RuneScape Terms of Service</li>
+              </ul>
+            </li>
+            <li>You will <strong className="text-white">not use</strong> this software for:
+              <ul className="list-circle list-inside ml-6 mt-2 space-y-1">
+                <li>Botting, macroing, or automation of in-game actions</li>
+                <li>Real-money trading (RMT)</li>
+                <li>Client manipulation or packet modification</li>
+                <li>Any violation of RuneScape Terms of Service</li>
+              </ul>
+            </li>
+          </ul>
+          <p className="pt-4 border-t border-dark-700">
+            <strong className="text-white">If you do not agree to these terms, you must not use this software.</strong>
+          </p>
+        </div>
+      </Card>
+
+      <Card title="Use at Your Own Risk" icon={<AlertTriangle className="w-5 h-5 text-yellow-400" />}>
+        <div className="space-y-4 text-dark-300">
+          <p>
+            This software is provided for <strong className="text-white">informational, analytical, and educational purposes only</strong>.
+          </p>
+          <p>
+            The authors and maintainers:
+          </p>
+          <ul className="list-disc list-inside space-y-2 ml-4">
+            <li>Cannot be held responsible for damages arising from use or misuse</li>
+            <li>Cannot be held responsible for violations of game rules</li>
+            <li>Cannot be held responsible for legal consequences from third-party services</li>
+            <li>Cannot be held responsible for loss of in-game items, currency, or account access</li>
+          </ul>
+          <p className="pt-4 border-t border-dark-700 text-yellow-400">
+            <strong>Use this software at your own risk. No guarantees are provided.</strong>
+          </p>
+        </div>
+      </Card>
+
+      <div className="text-center text-sm text-dark-500 pt-6 border-t border-dark-800">
+        <p>
+          For complete legal documentation, see the <a href="https://github.com/ImPanick/OSRS-GE-Sniper/blob/main/LEGAL.md" 
+          target="_blank" rel="noopener noreferrer" className="text-primary-400 hover:text-primary-300 underline">LEGAL.md</a> and{' '}
+          <a href="https://github.com/ImPanick/OSRS-GE-Sniper/blob/main/TERMS_OF_SERVICE.md" 
+          target="_blank" rel="noopener noreferrer" className="text-primary-400 hover:text-primary-300 underline">TERMS_OF_SERVICE.md</a> files in the repository.
+        </p>
       </div>
     </div>
   )
 }
-

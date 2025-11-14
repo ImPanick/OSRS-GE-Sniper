@@ -5,7 +5,7 @@ NOTE: This module defines JSON APIs only. UI is handled exclusively by the Next.
 """
 from flask import Blueprint, jsonify, request
 from utils.shared import get_item_lock, get_item_data
-from utils.database import get_db_connection, get_recent_history
+from utils.database import get_db_connection, get_recent_history, get_unified_guild_config
 from utils.item_metadata import get_item_meta, get_buy_limit
 from security import rate_limit, validate_json_payload, sanitize_guild_id, require_admin_key
 import sqlite3
@@ -22,6 +22,10 @@ def api_dumps():
     by analyzing 5-minute price snapshots from prices.runescape.wiki.
     
     Query Parameters:
+        guild_id (str, optional): Filter opportunities based on guild configuration:
+            - Only includes items with score >= guild's min_score
+            - Only includes items with margin_gp >= guild's min_margin_gp
+            - Only includes items whose tier is in guild's enabled_tiers
         tier (str, optional): Filter by tier name (iron, copper, bronze, silver, gold, 
                               platinum, ruby, sapphire, emerald, diamond)
         group (str, optional): Filter by tier group (metals, gems)
@@ -48,19 +52,34 @@ def api_dumps():
         - low (int): Current low price
         - buy (int): Alias for low price
         - sell (int): Alias for high price
-        - flags (list): Special flags (e.g., ["slow_buy", "super"])
+        - margin_gp (int): Price margin (high - low) in GP
         - max_buy_4h (int): GE buy limit (max units per 4 hours)
+        - max_profit_gp (int): Maximum potential profit (margin_gp * max_buy_4h)
+        - flags (list): Special flags (e.g., ["slow_buy", "one_gp_dump", "super"])
         - limit (int): Legacy alias for max_buy_4h
         - timestamp (str): ISO timestamp of snapshot
     
     Example:
         GET /api/dumps?tier=gold&limit=10
         GET /api/dumps?group=gems&special=super
+        GET /api/dumps?guild_id=123456789012345678
     """
+    guild_id = request.args.get('guild_id', '').strip()
     tier = request.args.get('tier', '').strip().lower()
     group = request.args.get('group', '').strip().lower()
     special = request.args.get('special', '').strip().lower()
     limit = request.args.get('limit', type=int)
+    
+    # Get guild config if guild_id is provided
+    guild_config = None
+    if guild_id:
+        guild_id = sanitize_guild_id(guild_id)
+        if guild_id:
+            try:
+                guild_config = get_unified_guild_config(guild_id)
+            except Exception as e:
+                print(f"[ERROR] Failed to get guild config for filtering: {e}")
+                guild_config = None
     
     try:
         # Import dump engine (uses cached results by default)
@@ -72,7 +91,29 @@ def api_dumps():
         # Apply filters
         opportunities = []
         for opp in opportunities_raw:
-            # Filter by tier
+            # Apply guild-specific filters if guild_id is provided
+            if guild_config:
+                # Filter by enabled_tiers
+                enabled_tiers = guild_config.get('enabled_tiers', [])
+                if enabled_tiers and len(enabled_tiers) > 0:
+                    opp_tier = opp.get('tier', '').lower()
+                    if opp_tier not in enabled_tiers:
+                        continue
+                
+                # Filter by min_score
+                min_score = guild_config.get('min_score', 0)
+                opp_score = opp.get('score', 0)
+                if opp_score < min_score:
+                    continue
+                
+                # Filter by min_margin_gp
+                min_margin_gp = guild_config.get('min_margin_gp', 0)
+                # Calculate margin_gp if not present (use realistic_profit or max_profit_4h)
+                margin_gp = opp.get('margin_gp') or opp.get('realistic_profit') or opp.get('max_profit_4h', 0)
+                if margin_gp < min_margin_gp:
+                    continue
+            
+            # Filter by tier (manual filter, still works)
             if tier and opp.get('tier', '').lower() != tier:
                 continue
             
@@ -108,8 +149,10 @@ def api_dumps():
                 'low': opp.get('low', 0),
                 'buy': opp.get('buy') or opp.get('low', 0),  # Alias for compatibility
                 'sell': opp.get('sell') or opp.get('high', 0),  # Alias for compatibility
-                'flags': opp.get('flags', []),
+                'margin_gp': opp.get('margin_gp', 0),
                 'max_buy_4h': opp.get('max_buy_4h', 0),
+                'max_profit_gp': opp.get('max_profit_gp', 0),
+                'flags': opp.get('flags', []),
                 'limit': opp.get('limit') or opp.get('max_buy_4h', 0),  # Legacy alias
                 'timestamp': opp.get('timestamp', '')
             }
@@ -181,7 +224,16 @@ def api_dumps_item(item_id):
                 for dump in item_data.get('dump_items', []):
                     if dump.get('id') == item_id:
                         max_buy_4h = get_buy_limit(item_id)
-                        opportunity = {**dump, 'max_buy_4h': max_buy_4h}
+                        high = dump.get('high', dump.get('sell', 0))
+                        low = dump.get('low', dump.get('buy', 0))
+                        margin_gp = high - low
+                        max_profit_gp = margin_gp * max_buy_4h
+                        opportunity = {
+                            **dump,
+                            'max_buy_4h': max_buy_4h,
+                            'margin_gp': margin_gp,
+                            'max_profit_gp': max_profit_gp
+                        }
                         break
         
         # Get recent history (last 5 minutes of snapshots)

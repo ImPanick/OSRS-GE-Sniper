@@ -199,7 +199,7 @@ export default function ItemPage() {
             )}
 
             {/* Prices */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="p-4 bg-dark-800 rounded-lg border border-dark-700">
                 <div className="text-xs text-dark-400 mb-2">High Price</div>
                 <div className="text-2xl font-bold text-green-400">{formatGP(item.high ?? item.sell)}</div>
@@ -207,6 +207,24 @@ export default function ItemPage() {
               <div className="p-4 bg-dark-800 rounded-lg border border-dark-700">
                 <div className="text-xs text-dark-400 mb-2">Low Price</div>
                 <div className="text-2xl font-bold text-red-400">{formatGP(item.low ?? item.buy)}</div>
+              </div>
+              <div className="p-4 bg-dark-800 rounded-lg border border-dark-700">
+                <div className="text-xs text-dark-400 mb-2">Margin (GP)</div>
+                <div className="text-2xl font-bold text-primary-400">
+                  {formatGP(
+                    item.high && item.low ? item.high - item.low : null
+                  )}
+                </div>
+              </div>
+              <div className="p-4 bg-dark-800 rounded-lg border border-dark-700">
+                <div className="text-xs text-dark-400 mb-2">Max Profit (GP)</div>
+                <div className="text-2xl font-bold text-yellow-400">
+                  {formatGP(
+                    item.high && item.low && item.max_buy_4h
+                      ? (item.high - item.low) * item.max_buy_4h
+                      : null
+                  )}
+                </div>
               </div>
             </div>
 

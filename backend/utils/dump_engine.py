@@ -331,28 +331,32 @@ def fetch_recent_history(hours: int = 4) -> Dict:
             'error': str(e)
         }
 
-def get_recent_history(item_id: int, minutes: int = 60) -> List[Dict]:
+def get_recent_history(item_id: int, minutes: int = 240) -> List[Dict]:
     """
     Get recent 5-minute snapshots for an item
     
     Args:
         item_id: OSRS item ID
-        minutes: Number of minutes of history to retrieve
+        minutes: Number of minutes of history to retrieve (default 240 = 4 hours)
         
     Returns:
         List of dicts with keys: timestamp, low, high, volume
+        Ordered by timestamp ASC (oldest first)
     """
     try:
         conn = get_db_connection()
         c = conn.cursor()
         
         cutoff = int(datetime.now().timestamp()) - (minutes * 60)
+        # Get up to 48 snapshots (4 hours * 12 snapshots per hour)
+        max_snapshots = (minutes // 5) + 1
         c.execute("""
             SELECT timestamp, low, high, volume
             FROM ge_prices_5m
             WHERE item_id = ? AND timestamp > ?
             ORDER BY timestamp ASC
-        """, (item_id, cutoff))
+            LIMIT ?
+        """, (item_id, cutoff, max_snapshots))
         
         rows = c.fetchall()
         return [
@@ -569,9 +573,9 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
             if low is None or high is None or low <= 0:
                 continue
             
-            # Get recent history (last 60 minutes = 12 snapshots)
+            # Get recent history (last 4 hours = 240 minutes = 48 snapshots)
             # This provides baseline for volume comparison
-            history = get_recent_history(item_id, minutes=60)
+            history = get_recent_history(item_id, minutes=240)
             
             # Need at least 2 snapshots to compare current vs previous
             if len(history) < 2:
@@ -611,6 +615,11 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
             oversupply_pct = (volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
             buy_speed_pct = (volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
             
+            # Calculate margin and profit metrics
+            margin_gp = high - low
+            max_buy_4h = buy_limit  # GE buy limit is already per 4 hours
+            max_profit_gp = margin_gp * max_buy_4h
+            
             # Determine special flags
             flags = []
             # Slow buy: less than 50% of limit traded in 5 minutes
@@ -643,9 +652,11 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
                 "low": int(low),
                 "buy": int(low),  # Alias for compatibility
                 "sell": int(high),  # Alias for compatibility
+                "margin_gp": int(margin_gp),
+                "max_buy_4h": int(max_buy_4h),
+                "max_profit_gp": int(max_profit_gp),
                 "flags": flags,
-                "max_buy_4h": buy_limit,
-                "limit": buy_limit,  # Legacy alias
+                "limit": int(buy_limit),  # Legacy alias
                 "timestamp": datetime.fromtimestamp(current_data.get("timestamp", current_time)).isoformat() + "Z"
             }
             

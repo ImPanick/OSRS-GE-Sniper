@@ -58,6 +58,8 @@ export interface DumpItem extends Item {
   buy_speed?: number
   flags?: string[]
   max_buy_4h?: number
+  margin_gp?: number
+  max_profit_gp?: number
   timestamp?: string
 }
 
@@ -78,6 +80,7 @@ export const apiClient = {
     group?: string
     special?: string
     limit?: number
+    guild_id?: string
   }): Promise<DumpItem[]> => {
     const { data } = await api.get('/api/dumps', { params })
     return data
@@ -232,8 +235,20 @@ export const apiClient = {
     min_score?: number
     enabled_tiers?: string[]
     max_alerts_per_interval?: number
+    alert_channel_id?: string
+    role_ids_per_tier?: Record<string, string>
   }) => {
     const { data } = await api.post(`/api/config/${guildId}/alerts`, settings)
+    return data
+  },
+
+  getConfig: async (guildId: string) => {
+    const { data } = await api.get(`/api/config/${guildId}`)
+    return data
+  },
+
+  saveConfig: async (guildId: string, config: any) => {
+    const { data } = await api.post(`/api/config/${guildId}`, config)
     return data
   },
 }

@@ -112,6 +112,21 @@ Edit `config.json`:
 - `backend_url`: Backend URL (use Proxmox IP for production)
 - `admin_key`: Secure random string for admin API access
 
+### Discord Bot Environment Variables
+The Discord bot can be configured via environment variables or `config.json`:
+- `DISCORD_TOKEN`: Discord bot token (required)
+- `BACKEND_URL`: Backend API URL (default: `http://localhost:5000`)
+- `CONFIG_PATH`: Path to config.json file
+
+### Per-Server Guild Configuration
+Each Discord server (guild) can configure:
+- **Channels**: Different channels for different types of notifications (cheap flips, medium flips, expensive flips, etc.)
+- **Roles**: Discord roles to ping for different risk levels and quality tiers
+- **Tier Settings**: Configure Discord role mentions per tier and minimum tier threshold for automatic alerts
+- **Alert Settings**: Minimum GP margin, minimum score, enabled tiers, and max alerts per interval
+
+Configuration is managed via the web dashboard at `/config/<guild_id>` or via Discord slash commands (`/sniper_config`).
+
 ## Discord Commands
 
 - `/dip` - View top dumps (buy opportunities)
@@ -192,13 +207,20 @@ Each server can configure:
 
 ## Architecture
 
-- **Backend** (`backend/app.py`): Flask API providing JSON endpoints only. All user-facing UI is handled by the Next.js frontend.
-- **Frontend** (`frontend/`): Next.js/React application with Tailwind CSS - the ONLY user interface for dashboards, configuration, and data visualization.
-- **Discord Bot** (`discord-bot/bot.py`): Discord bot with slash commands and tiered notifications
+This project uses a modern three-tier architecture:
+
+- **Backend** (`backend/app.py`): Flask API providing JSON endpoints only. Uses blueprints for route organization (`routes_core.py`, `routes_api_items.py`, `routes_api_dumps.py`, `routes_admin.py`). All user-facing UI is handled by the Next.js frontend.
+- **Frontend** (`frontend/`): Next.js/React application with Tailwind CSS - the ONLY user interface for dashboards, configuration, and data visualization. All pages are React components in `frontend/app/`.
+- **Discord Bot** (`discord-bot/bot.py`): Discord.py v2 bot with slash commands and tiered notifications. Uses cogs for command organization (`cogs/config.py`, `cogs/dumps.py`, etc.).
+
+### Key Components
+
 - **Dump Engine** (`backend/utils/dump_engine.py`): Analyzes price data and assigns tier scores
 - **Cache Updater** (`backend/utils/cache_updater.py`): Updates item cache every 6 hours
+- **Database** (`backend/utils/database.py`): SQLite database for price history and configuration
+- **Security** (`backend/security.py`): Rate limiting, input validation, and admin authentication
 
-**Important:** The Flask backend is strictly API-only. Do NOT add HTML/Jinja/HTMX templates to the backend. All new UI work belongs in the Next.js frontend under `frontend/`.
+**Important:** The Flask backend is strictly API-only. Do NOT add HTML/Jinja/HTMX templates to the backend. All new UI work belongs in the Next.js frontend under `frontend/`. Legacy HTML/Jinja/HTMX code has been moved to `backend/legacy/` and is not used.
 
 ## Development
 
@@ -220,6 +242,24 @@ python bot.py
 cd docker
 docker-compose up --build
 ```
+
+## Legal & Trademarks
+
+**Important Legal Notice:**
+
+- **RuneScape®**, **Old School RuneScape®**, **OSRS®**, the **Grand Exchange**, in-game items, names, and all related terms are the exclusive intellectual property of **Jagex Ltd.**
+- This project claims **ZERO ownership** of any Jagex intellectual property.
+- This project is **not affiliated** with Jagex Ltd. and is **not endorsed** by the RuneScape team.
+- This tool uses **publicly available price data** from community APIs (prices.runescape.wiki, OSRS Wiki).
+- The software is provided **AS IS** with **NO WARRANTY**. Use at your own risk.
+- The authors are **NOT liable** for account bans, game losses, or any consequences of use.
+
+For complete legal information, see:
+- [LEGAL.md](LEGAL.md) - Full legal documentation
+- [TERMS_OF_SERVICE.md](TERMS_OF_SERVICE.md) - Terms of service
+- [Legal Page](/legal) - Web interface legal page
+
+**By using this software, you agree to these terms and assume full responsibility for your actions.**
 
 ## License
 

@@ -13,7 +13,8 @@ from config_manager import (
 from utils.database import (
     get_all_tiers, get_guild_tier_settings, get_guild_config,
     update_tier, update_guild_tier_setting, update_guild_config,
-    get_guild_alert_settings, update_guild_alert_settings
+    get_guild_alert_settings, update_guild_alert_settings,
+    get_unified_guild_config
 )
 from security import (
     rate_limit, validate_json_payload, require_admin_key,
@@ -683,10 +684,161 @@ def pull_updates():
             "error": str(e)
         }), 500
 
+@bp.route('/api/config/<guild_id>', methods=['GET'])
+@rate_limit(max_requests=100, window=60)
+def api_get_guild_config(guild_id):
+    """Get unified guild configuration (accessible to bot and local requests)"""
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    if is_banned(guild_id):
+        return jsonify({"error": "This server has been banned from using the sniper bot."}), 403
+    
+    try:
+        config = get_unified_guild_config(guild_id)
+        return jsonify(config)
+    except Exception as e:
+        print(f"[ERROR] api_get_guild_config: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to get guild configuration"}), 500
+
+@bp.route('/api/config/<guild_id>', methods=['POST'])
+@rate_limit(max_requests=30, window=60)
+def api_save_guild_config(guild_id):
+    """Save unified guild configuration"""
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Configuration interface is LAN-only."}), 403
+    
+    guild_id = sanitize_guild_id(guild_id)
+    if not guild_id:
+        return jsonify({"error": "Invalid server ID"}), 400
+    
+    if is_banned(guild_id):
+        return jsonify({"error": "This server has been banned from using the sniper bot."}), 403
+    
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        # Validate and extract settings
+        alert_channel_id = data.get('alert_channel_id')
+        min_margin_gp = data.get('min_margin_gp')
+        min_score = data.get('min_score')
+        enabled_tiers = data.get('enabled_tiers')
+        role_ids_per_tier = data.get('role_ids_per_tier', {})
+        min_tier_name = data.get('min_tier_name')
+        max_alerts_per_interval = data.get('max_alerts_per_interval')
+        
+        # Validate alert_channel_id
+        if alert_channel_id is not None:
+            if alert_channel_id == "":
+                alert_channel_id = None
+            else:
+                alert_channel_id = sanitize_channel_id(str(alert_channel_id))
+                if not alert_channel_id:
+                    return jsonify({"error": "Invalid alert_channel_id format"}), 400
+        
+        # Validate min_margin_gp
+        if min_margin_gp is not None:
+            try:
+                min_margin_gp = int(min_margin_gp)
+                if min_margin_gp < 0:
+                    return jsonify({"error": "min_margin_gp must be >= 0"}), 400
+            except (ValueError, TypeError):
+                return jsonify({"error": "min_margin_gp must be an integer"}), 400
+        
+        # Validate min_score
+        if min_score is not None:
+            try:
+                min_score = int(min_score)
+                if min_score < 0 or min_score > 100:
+                    return jsonify({"error": "min_score must be between 0 and 100"}), 400
+            except (ValueError, TypeError):
+                return jsonify({"error": "min_score must be an integer"}), 400
+        
+        # Validate enabled_tiers
+        if enabled_tiers is not None:
+            if not isinstance(enabled_tiers, list):
+                return jsonify({"error": "enabled_tiers must be an array"}), 400
+            valid_tiers = ['iron', 'copper', 'bronze', 'silver', 'gold', 'platinum', 'ruby', 'sapphire', 'emerald', 'diamond']
+            for tier in enabled_tiers:
+                if tier.lower() not in valid_tiers:
+                    return jsonify({"error": f"Invalid tier: {tier}. Must be one of: {', '.join(valid_tiers)}"}), 400
+            # Normalize to lowercase
+            enabled_tiers = [t.lower() for t in enabled_tiers]
+        
+        # Validate role_ids_per_tier
+        if role_ids_per_tier is not None:
+            if not isinstance(role_ids_per_tier, dict):
+                return jsonify({"error": "role_ids_per_tier must be an object"}), 400
+            # Validate each role_id
+            for tier_name, role_id in role_ids_per_tier.items():
+                if role_id is not None and role_id != "":
+                    # Role IDs are Discord snowflakes (17-19 digits)
+                    import re
+                    if not re.match(r'^\d{17,19}$', str(role_id)):
+                        return jsonify({"error": f"Invalid role_id for tier {tier_name}"}), 400
+        
+        # Validate max_alerts_per_interval
+        if max_alerts_per_interval is not None:
+            try:
+                max_alerts_per_interval = int(max_alerts_per_interval)
+                if max_alerts_per_interval < 1 or max_alerts_per_interval > 10:
+                    return jsonify({"error": "max_alerts_per_interval must be between 1 and 10"}), 400
+            except (ValueError, TypeError):
+                return jsonify({"error": "max_alerts_per_interval must be an integer"}), 400
+        
+        # Update alert_channel_id in guild_config
+        if alert_channel_id is not None:
+            update_guild_config(guild_id, alert_channel_id=alert_channel_id)
+        
+        # Update min_tier_name in guild_config
+        if min_tier_name is not None:
+            if min_tier_name == "":
+                min_tier_name = None
+            update_guild_config(guild_id, min_tier_name=min_tier_name)
+        
+        # Update alert settings
+        update_guild_alert_settings(
+            guild_id,
+            min_margin_gp=min_margin_gp,
+            min_score=min_score,
+            enabled_tiers=enabled_tiers,
+            max_alerts_per_interval=max_alerts_per_interval
+        )
+        
+        # Update role_ids_per_tier (update guild_tier_settings)
+        if role_ids_per_tier is not None:
+            for tier_name, role_id in role_ids_per_tier.items():
+                # Get current setting to preserve enabled status
+                tier_settings = get_guild_tier_settings(guild_id)
+                current_setting = tier_settings.get(tier_name, {})
+                enabled = current_setting.get("enabled", True)
+                
+                # Update with new role_id
+                update_guild_tier_setting(
+                    guild_id,
+                    tier_name,
+                    role_id=role_id if role_id else None,
+                    enabled=enabled
+                )
+        
+        # Return updated config
+        config = get_unified_guild_config(guild_id)
+        return jsonify({"status": "saved", "config": config})
+    except Exception as e:
+        print(f"[ERROR] api_save_guild_config: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to save guild configuration"}), 500
+
 @bp.route('/api/config/<guild_id>/alerts', methods=['GET'])
 @rate_limit(max_requests=100, window=60)
 def api_get_alert_settings(guild_id):
-    """Get alert settings for a guild (accessible to bot and local requests)"""
+    """Get alert settings for a guild (accessible to bot and local requests) - DEPRECATED, use /api/config/<guild_id>"""
     # Allow bot to fetch settings (bot runs on same machine/network)
     
     guild_id = sanitize_guild_id(guild_id)
@@ -785,6 +937,74 @@ def api_save_alert_settings(guild_id):
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Failed to save alert settings"}), 500
+
+@bp.route('/api/admin/fetch_history', methods=['POST'])
+@require_admin_key()
+@rate_limit(max_requests=10, window=300)  # Limit to 10 requests per 5 minutes (more lenient for admin)
+def api_admin_fetch_history():
+    """
+    Manually trigger a backfill of the last 4 hours of 5-minute GE price data.
+    
+    This endpoint fetches historical 5-minute snapshots from the OSRS Wiki API
+    and stores them in the database for dump analysis.
+    
+    Accepts optional JSON body: { "hours": 4 }
+    Default is 4 hours, max is 24 hours.
+    
+    Returns:
+        JSON response with:
+        - ok (bool): Success status
+        - hours (int): Number of hours fetched
+        - snapshots (int): Number of 5-minute snapshots fetched
+        - items_written (int): Total number of item entries written to database
+        - error (str, optional): Error message if failed
+    """
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    try:
+        data = request.get_json(force=True) if request.is_json else {}
+        hours = data.get('hours', 4)
+        
+        # Validate hours parameter
+        try:
+            hours = int(hours)
+            if hours < 1 or hours > 24:
+                return jsonify({"error": "Hours must be between 1 and 24"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid hours parameter"}), 400
+        
+        # Import and call fetch_recent_history
+        from utils.dump_engine import fetch_recent_history
+        
+        result = fetch_recent_history(hours=hours)
+        
+        # Check if there was an error
+        if 'error' in result:
+            return jsonify({
+                "ok": False,
+                "error": result.get('error'),
+                "hours": result.get('hours', hours),
+                "snapshots": result.get('snapshots', 0),
+                "items_written": result.get('items_written', 0)
+            }), 500
+        
+        return jsonify({
+            "ok": True,
+            "hours": result.get('hours', hours),
+            "snapshots": result.get('snapshots', 0),
+            "items_written": result.get('items_written', 0)
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] api_admin_fetch_history failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "ok": False,
+            "error": "Unexpected error occurred",
+            "message": str(e)
+        }), 500
 
 @bp.route('/api/admin/cache/fetch_recent', methods=['POST'])
 @require_admin_key()
