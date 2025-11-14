@@ -1,9 +1,42 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 # Backend now uses robust config loading with defaults
 # No need to create config.json - backend will use /app/config.default.json or hardcoded defaults
 # This entrypoint is kept for backward compatibility but does not require config.json to exist
+
+# Wait for PostgreSQL if DB_URL is set to Postgres
+if [ -n "$DB_URL" ] && echo "$DB_URL" | grep -q "postgres"; then
+    echo "[ENTRYPOINT] Waiting for PostgreSQL to be ready..."
+    
+    # Extract host and port from DB_URL
+    DB_HOST=$(echo "$DB_URL" | sed -n 's/.*@\([^:]*\):.*/\1/p')
+    DB_PORT=$(echo "$DB_URL" | sed -n 's/.*:\([0-9]*\)\/.*/\1/p')
+    
+    if [ -z "$DB_HOST" ]; then
+        DB_HOST="postgres"
+    fi
+    if [ -z "$DB_PORT" ]; then
+        DB_PORT="5432"
+    fi
+    
+    # Wait for Postgres to be ready (max 60 seconds)
+    MAX_ATTEMPTS=60
+    ATTEMPT=0
+    while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+        if nc -z "$DB_HOST" "$DB_PORT" 2>/dev/null; then
+            echo "[ENTRYPOINT] PostgreSQL is ready!"
+            break
+        fi
+        ATTEMPT=$((ATTEMPT + 1))
+        echo "[ENTRYPOINT] Waiting for PostgreSQL... ($ATTEMPT/$MAX_ATTEMPTS)"
+        sleep 1
+    done
+    
+    if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+        echo "[ENTRYPOINT] WARNING: PostgreSQL may not be ready, continuing anyway..."
+    fi
+fi
 
 # Log config status
 if [ -n "$CONFIG_PATH" ]; then

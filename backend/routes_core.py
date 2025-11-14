@@ -8,7 +8,8 @@ from utils.shared import (
     get_item_lock, get_item_data, BASE, HEADERS, FALLBACK_BASE, FALLBACK_HEADERS,
     fetch_with_fallback, convert_1h_data_to_dict, TIME_WINDOWS, needs_setup, item_names
 )
-from utils.database import get_db_connection, get_price_historicals
+from utils.database import get_db_session, get_price_historicals
+from sqlalchemy import text
 from security import rate_limit
 from datetime import datetime
 import requests
@@ -150,30 +151,30 @@ def api_recent_trades():
         limit = 50
     
     try:
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("""
-            SELECT item_id, timestamp, low, high, volume
-            FROM prices
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (limit,))
-        
-        rows = c.fetchall()
-        trades = []
-        for row in rows:
-            item_id, timestamp, low, high, volume = row
-            name = item_names.get(str(item_id), f"Item {item_id}")
-            trades.append({
-                "item_id": item_id,
-                "name": name,
-                "timestamp": timestamp,
-                "time": datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S"),
-                "low": low,
-                "high": high,
-                "volume": volume,
-                "avg_price": (low + high) // 2
-            })
+        session = get_db_session()
+        try:
+            result = session.execute(
+                text("SELECT item_id, timestamp, low, high, volume FROM prices ORDER BY timestamp DESC LIMIT :limit"),
+                {"limit": limit}
+            )
+            
+            rows = result.fetchall()
+            trades = []
+            for row in rows:
+                item_id, timestamp, low, high, volume = row
+                name = item_names.get(str(item_id), f"Item {item_id}")
+                trades.append({
+                    "item_id": item_id,
+                    "name": name,
+                    "timestamp": timestamp,
+                    "time": datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S"),
+                    "low": low,
+                    "high": high,
+                    "volume": volume,
+                    "avg_price": (low + high) // 2
+                })
+        finally:
+            session.close()
         
         return jsonify({
             "trades": trades,

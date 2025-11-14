@@ -445,11 +445,13 @@ class TextCommands(commands.Cog):
                        "`!recipe <item>` - Get recipe information\n"
                        "`!decant <potion>` - Compare potion doses\n"
                        "`!ping` - Check bot latency\n"
+                       "`!sniper_debug` - Show bot status (Admin only)\n"
                        "`!help` - Show this help\n\n"
                        "**Slash Commands**\n"
                        "`/item` - Look up an item\n"
                        "`/recipe` - Get recipe information\n"
                        "`/decant` - Compare potion doses\n"
+                       "`/ping` - Check bot latency\n"
                        "`/dip` - View top dumps\n"
                        "`/pump` - View top spikes\n"
                        "`/flips [min_gp]` - View top flips\n"
@@ -457,6 +459,7 @@ class TextCommands(commands.Cog):
                        "`/profit <gp>` - Log flip profit\n"
                        "`/leaderboard` - View top flippers\n"
                        "`/sniper_config` - Open web dashboard\n"
+                       "`/sniper_debug` - Show bot status (Admin only)\n"
                        "`/tiers` - Show tier configuration",
             color=0x3498db
         )

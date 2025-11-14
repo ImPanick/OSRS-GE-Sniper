@@ -125,6 +125,14 @@ def api_item_get(item_id=None):
         except (KeyError, ValueError, AttributeError) as e:
             print(f"[ERROR] Failed to process opportunity for item {item_id}: {e}")
         
+        # Calculate margin and profit metrics
+        margin_gp = None
+        max_profit_gp = None
+        if high is not None and low is not None:
+            margin_gp = high - low
+            if max_buy_4h and max_buy_4h > 0:
+                max_profit_gp = margin_gp * max_buy_4h
+        
         result = {
             "id": item_id,
             "name": item_name,
@@ -139,6 +147,8 @@ def api_item_get(item_id=None):
             "volume": volume,
             "max_buy_4h": max_buy_4h,
             "limit": max_buy_4h,
+            "margin_gp": margin_gp,
+            "max_profit_gp": max_profit_gp,
             **historicals
         }
         

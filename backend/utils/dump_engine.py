@@ -4,27 +4,34 @@
 5-Minute Time-Series Dump Engine
 - Fetches /5m data from OSRS Wiki API
 - Stores snapshots in database
-- Calculates dump quality scores (0-100)
+- Calculates dump quality scores (0-100) using precise, deterministic metrics
 - Maps scores to tier system (Iron → Diamond)
 
 True Dump Detection:
 A "dump" represents oversupply - large quantities sold at lower prices than usual.
 This is NOT just a price drop, but a combination of:
-- Price drop percentage (from previous period)
+- Price drop percentage (from baseline period)
 - Volume spike (current volume vs expected baseline)
 - Oversupply ratio (volume traded vs GE buy limit)
 - Buy speed (trades per 5 minutes relative to limit)
+
+All metrics are computed deterministically and are fully explainable.
 """
 import requests
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import os
 import threading
 import time
+import logging
 
 # Import database and metadata modules
-from .database import get_db_connection, db_transaction
+from .database import get_db_session, db_transaction, bulk_insert_snapshots
+from sqlalchemy import text
 from .item_metadata import get_item_meta
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # OSRS Wiki API configuration
 BASE_URL = "https://prices.runescape.wiki/api/v1/osrs"
@@ -53,6 +60,62 @@ TIERS = [
     {"name": "diamond", "emoji": "💎", "group": "gems", "min": 91, "max": 100},
 ]
 
+# Centralized Dump Scoring Configuration
+# This configuration controls how dump scores are calculated.
+# All weights must sum to 100.0 for proper normalization.
+DUMP_SCORING_CONFIG = {
+    # Component weights (must sum to 100.0)
+    "weights": {
+        "drop_pct": 40.0,      # Price drop percentage (largest weight)
+        "vol_spike_pct": 30.0,  # Volume spike percentage
+        "oversupply_pct": 20.0, # Oversupply percentage
+        "max_profit_gp": 10.0,  # Maximum profit potential (normalized)
+    },
+    
+    # Normalization factors (how to convert raw metrics to score components)
+    "normalization": {
+        # drop_pct: percentage points per score point
+        # A 20% drop = 40 points (max for this component)
+        "drop_pct_factor": 2.0,  # drop_pct * 2.0 = score (capped at weight)
+        
+        # vol_spike_pct: percentage points per score point
+        # A 100% spike (double expected) = 30 points (max for this component)
+        "vol_spike_pct_factor": 0.3,  # vol_spike_pct * 0.3 = score (capped at weight)
+        
+        # oversupply_pct: percentage points per score point
+        # 100% oversupply (volume = limit) = 20 points (max for this component)
+        "oversupply_pct_factor": 0.2,  # oversupply_pct * 0.2 = score (capped at weight)
+        
+        # max_profit_gp: GP per score point (normalized)
+        # This is normalized based on a reference value (e.g., 1M GP = 10 points)
+        "max_profit_gp_reference": 1000000.0,  # 1M GP = 10 points (max for this component)
+        "max_profit_gp_factor": 10.0,  # (max_profit_gp / reference) * factor = score (capped at weight)
+    },
+    
+    # Thresholds for flag detection
+    "thresholds": {
+        # slow_buy: volume is less than this percentage of expected 5-minute volume
+        "slow_buy_volume_pct": 50.0,  # Less than 50% of expected volume in 5 minutes
+        
+        # one_gp_dump: price dropped to 1 GP
+        "one_gp_dump_price": 1,
+        
+        # Minimum history required for reliable scoring
+        "min_history_snapshots": 2,  # Need at least 2 snapshots to compare
+        "preferred_history_snapshots": 48,  # Prefer 48 snapshots (4 hours)
+    },
+    
+    # Baseline calculation
+    "baseline": {
+        # Use median for price baseline (more robust to outliers)
+        "use_median_for_price": True,
+        # Use mean for volume baseline (captures average activity)
+        "use_mean_for_volume": True,
+        # Number of recent snapshots to use for baseline (excluding current)
+        "baseline_snapshots": 12,  # Last 12 snapshots (1 hour) for baseline
+    }
+}
+
 def fetch_with_fallback(url, headers, fallback_url=None, fallback_headers=None, timeout=30):
     """Fetch data from primary API with automatic fallback"""
     try:
@@ -60,14 +123,14 @@ def fetch_with_fallback(url, headers, fallback_url=None, fallback_headers=None, 
         response.raise_for_status()
         return response.json(), 'primary'
     except Exception as e:
-        print(f"[WARN] Primary API failed ({url}): {e}")
+        logger.warning(f"Primary API failed ({url}): {e}")
         if fallback_url and fallback_headers:
             try:
                 response = requests.get(fallback_url, headers=fallback_headers, timeout=timeout)
                 response.raise_for_status()
                 return response.json(), 'fallback'
             except Exception as fallback_error:
-                print(f"[ERROR] Fallback API also failed: {fallback_error}")
+                logger.error(f"Fallback API also failed: {fallback_error}")
                 raise
         raise
 
@@ -111,7 +174,7 @@ def fetch_5m_snapshot() -> Dict[str, Dict]:
         )
         
         if source == 'fallback':
-            print("[INFO] Using fallback API for 5m prices")
+            logger.info("Using fallback API for 5m prices")
         
         # Convert to dict format
         data_5m = convert_5m_data_to_dict(data_5m_raw)
@@ -140,13 +203,11 @@ def fetch_5m_snapshot() -> Dict[str, Dict]:
                 "timestamp": item_data.get("timestamp") or current_time
             }
         
-        print(f"[DUMP_ENGINE] Fetched 5m snapshot: {len(snapshot)} items")
+        logger.info(f"Fetched 5m snapshot: {len(snapshot)} items")
         return snapshot
         
     except Exception as e:
-        print(f"[ERROR] fetch_5m_snapshot failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"fetch_5m_snapshot failed: {e}", exc_info=True)
         return {}
 
 def record_snapshot(snapshot: Dict[str, Dict]):
@@ -157,35 +218,32 @@ def record_snapshot(snapshot: Dict[str, Dict]):
         snapshot: Dict mapping item_id (str) to {low, high, volume, timestamp}
     """
     try:
-        with db_transaction() as conn:
-            c = conn.cursor()
+        # Convert snapshot dict to list of records for bulk insert
+        snapshot_data = []
+        for item_id_str, data in snapshot.items():
+            item_id = int(item_id_str)
+            timestamp = data.get("timestamp", int(datetime.now().timestamp()))
+            low = data.get("low")
+            high = data.get("high")
+            volume = data.get("volume", 0)
             
-            for item_id_str, data in snapshot.items():
-                item_id = int(item_id_str)
-                timestamp = data.get("timestamp", int(datetime.now().timestamp()))
-                low = data.get("low")
-                high = data.get("high")
-                volume = data.get("volume", 0)
-                
-                if low is None or high is None:
-                    continue
-                
-                # Insert or replace (handle duplicates)
-                c.execute("""
-                    INSERT OR REPLACE INTO ge_prices_5m 
-                    (item_id, timestamp, low, high, volume)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (item_id, timestamp, low, high, volume))
+            if low is None or high is None:
+                continue
             
-            # Clean up old data (older than 7 days)
-            week_ago = int(datetime.now().timestamp()) - 7 * 24 * 60 * 60
-            c.execute("DELETE FROM ge_prices_5m WHERE timestamp < ?", (week_ago,))
-            
-        print(f"[DUMP_ENGINE] Recorded {len(snapshot)} items to database")
+            snapshot_data.append({
+                "item_id": item_id,
+                "timestamp": timestamp,
+                "low": low,
+                "high": high,
+                "volume": volume
+            })
+        
+        # Use bulk insert for better performance
+        if snapshot_data:
+            bulk_insert_snapshots(snapshot_data, table_name='ge_prices_5m')
+            logger.info(f"Recorded {len(snapshot_data)} items to database")
     except Exception as e:
-        print(f"[ERROR] record_snapshot failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"record_snapshot failed: {e}", exc_info=True)
 
 def fetch_5m_snapshot_at_timestamp(timestamp: int) -> Dict[str, Dict]:
     """
@@ -212,7 +270,7 @@ def fetch_5m_snapshot_at_timestamp(timestamp: int) -> Dict[str, Dict]:
         )
         
         if source == 'fallback':
-            print(f"[INFO] Using fallback API for 5m prices at timestamp {aligned_ts}")
+            logger.info(f"Using fallback API for 5m prices at timestamp {aligned_ts}")
         
         # Convert to dict format
         data_5m = convert_5m_data_to_dict(data_5m_raw)
@@ -230,7 +288,7 @@ def fetch_5m_snapshot_at_timestamp(timestamp: int) -> Dict[str, Dict]:
         return snapshot
         
     except Exception as e:
-        print(f"[ERROR] fetch_5m_snapshot_at_timestamp failed for timestamp {timestamp}: {e}")
+        logger.error(f"fetch_5m_snapshot_at_timestamp failed for timestamp {timestamp}: {e}", exc_info=True)
         return {}
 
 def fetch_recent_history(hours: int = 4) -> Dict:
@@ -242,7 +300,7 @@ def fetch_recent_history(hours: int = 4) -> Dict:
         hours: Number of hours of history to fetch (default 4, max 24)
     
     Returns:
-        Summary dict: { 'hours': hours, 'snapshots': n, 'items_written': m }
+        Summary dict: { 'hours': hours, 'snapshots': n, 'items_written': m, 'items_inserted': x, 'items_skipped': y }
     """
     # Cap hours to a sane maximum
     hours = min(max(1, hours), 24)
@@ -258,6 +316,8 @@ def fetch_recent_history(hours: int = 4) -> Dict:
         
         total_snapshots = 0
         total_items_written = 0
+        total_items_inserted = 0
+        total_items_skipped = 0
         
         # Iterate backwards from now_floor to start_ts (inclusive) in 300s increments
         current_ts = now_floor
@@ -267,7 +327,7 @@ def fetch_recent_history(hours: int = 4) -> Dict:
             timestamps_to_fetch.append(current_ts)
             current_ts -= 300
         
-        print(f"[DUMP_ENGINE] Fetching {len(timestamps_to_fetch)} snapshots for last {hours} hours")
+        logger.info(f"Fetching {len(timestamps_to_fetch)} snapshots for last {hours} hours")
         
         for ts in timestamps_to_fetch:
             try:
@@ -275,59 +335,68 @@ def fetch_recent_history(hours: int = 4) -> Dict:
                 snapshot = fetch_5m_snapshot_at_timestamp(ts)
                 
                 if not snapshot:
-                    print(f"[WARN] No data for timestamp {ts}")
+                    logger.warning(f"No data for timestamp {ts}")
                     continue
                 
-                # Record snapshot to database (handles duplicates via INSERT OR REPLACE)
-                items_count = 0
-                with db_transaction() as conn:
-                    c = conn.cursor()
+                # Record snapshot to database using bulk insert
+                snapshot_data = []
+                items_skipped = 0
+                for item_id_str, data in snapshot.items():
+                    item_id = int(item_id_str)
+                    timestamp = data.get("timestamp", ts)
+                    low = data.get("low")
+                    high = data.get("high")
+                    volume = data.get("volume", 0)
                     
-                    for item_id_str, data in snapshot.items():
-                        item_id = int(item_id_str)
-                        timestamp = data.get("timestamp", ts)
-                        low = data.get("low")
-                        high = data.get("high")
-                        volume = data.get("volume", 0)
-                        
-                        if low is None or high is None:
-                            continue
-                        
-                        # Insert or replace (handle duplicates)
-                        c.execute("""
-                            INSERT OR REPLACE INTO ge_prices_5m 
-                            (item_id, timestamp, low, high, volume)
-                            VALUES (?, ?, ?, ?, ?)
-                        """, (item_id, timestamp, low, high, volume))
-                        items_count += 1
+                    if low is None or high is None:
+                        items_skipped += 1
+                        continue
+                    
+                    snapshot_data.append({
+                        "item_id": item_id,
+                        "timestamp": timestamp,
+                        "low": low,
+                        "high": high,
+                        "volume": volume
+                    })
+                
+                if snapshot_data:
+                    bulk_insert_snapshots(snapshot_data, table_name='ge_prices_5m')
+                    items_inserted = len(snapshot_data)
+                else:
+                    items_inserted = 0
                 
                 total_snapshots += 1
-                total_items_written += items_count
+                total_items_written += len(snapshot)
+                total_items_inserted += items_inserted
+                total_items_skipped += items_skipped
                 
                 # Small sleep between requests to respect rate limits
                 time.sleep(0.3)
                 
             except Exception as e:
-                print(f"[ERROR] Failed to fetch/record snapshot for timestamp {ts}: {e}")
+                logger.error(f"Failed to fetch/record snapshot for timestamp {ts}: {e}", exc_info=True)
                 # Continue to next timestamp
                 continue
         
-        print(f"[DUMP_ENGINE] Fetched {total_snapshots} snapshots, wrote {total_items_written} item entries")
+        logger.info(f"Fetched {total_snapshots} snapshots, wrote {total_items_written} item entries ({total_items_inserted} new, {total_items_skipped} skipped)")
         
         return {
             'hours': hours,
             'snapshots': total_snapshots,
-            'items_written': total_items_written
+            'items_written': total_items_written,
+            'items_inserted': total_items_inserted,
+            'items_skipped': total_items_skipped
         }
         
     except Exception as e:
-        print(f"[ERROR] fetch_recent_history failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"fetch_recent_history failed: {e}", exc_info=True)
         return {
             'hours': hours,
             'snapshots': 0,
             'items_written': 0,
+            'items_inserted': 0,
+            'items_skipped': 0,
             'error': str(e)
         }
 
@@ -344,105 +413,248 @@ def get_recent_history(item_id: int, minutes: int = 240) -> List[Dict]:
         Ordered by timestamp ASC (oldest first)
     """
     try:
-        conn = get_db_connection()
-        c = conn.cursor()
-        
-        cutoff = int(datetime.now().timestamp()) - (minutes * 60)
-        # Get up to 48 snapshots (4 hours * 12 snapshots per hour)
-        max_snapshots = (minutes // 5) + 1
-        c.execute("""
-            SELECT timestamp, low, high, volume
-            FROM ge_prices_5m
-            WHERE item_id = ? AND timestamp > ?
-            ORDER BY timestamp ASC
-            LIMIT ?
-        """, (item_id, cutoff, max_snapshots))
-        
-        rows = c.fetchall()
-        return [
-            {
-                "timestamp": row[0],
-                "low": row[1],
-                "high": row[2],
-                "volume": row[3]
-            }
-            for row in rows
-        ]
+        session = get_db_session()
+        try:
+            cutoff = int(datetime.now().timestamp()) - (minutes * 60)
+            # Get up to 48 snapshots (4 hours * 12 snapshots per hour)
+            max_snapshots = (minutes // 5) + 1
+            result = session.execute(
+                text("""
+                    SELECT timestamp, low, high, volume
+                    FROM ge_prices_5m
+                    WHERE item_id = :item_id AND timestamp > :cutoff
+                    ORDER BY timestamp ASC
+                    LIMIT :max_snapshots
+                """),
+                {"item_id": item_id, "cutoff": cutoff, "max_snapshots": max_snapshots}
+            )
+            
+            rows = result.fetchall()
+            return [
+                {
+                    "timestamp": row[0],
+                    "low": row[1],
+                    "high": row[2],
+                    "volume": row[3]
+                }
+                for row in rows
+            ]
+        finally:
+            session.close()
     except Exception as e:
-        print(f"[ERROR] get_recent_history failed for item {item_id}: {e}")
+        logger.error(f"get_recent_history failed for item {item_id}: {e}", exc_info=True)
         return []
 
-def compute_dump_score(
-    prev_low: float,
-    curr_low: float,
-    curr_volume: float,
-    avg_volume: float,
+def compute_baseline_metrics(history: List[Dict], use_median_for_price: bool = True, use_mean_for_volume: bool = True, baseline_snapshots: int = 12) -> Tuple[float, float]:
+    """
+    Compute baseline price and volume from history.
+    
+    Args:
+        history: List of snapshots (ordered by timestamp ASC, oldest first)
+        use_median_for_price: If True, use median for price baseline (more robust)
+        use_mean_for_volume: If True, use mean for volume baseline
+        baseline_snapshots: Number of recent snapshots to use for baseline (excluding current)
+    
+    Returns:
+        Tuple of (baseline_price, baseline_volume)
+        Returns (0.0, 0.0) if insufficient data
+    """
+    if not history or len(history) < 2:
+        return (0.0, 0.0)
+    
+    # Use last N snapshots for baseline (excluding the most recent, which is the current)
+    baseline_data = history[-baseline_snapshots-1:-1] if len(history) > baseline_snapshots else history[:-1]
+    
+    if not baseline_data:
+        return (0.0, 0.0)
+    
+    # Extract prices and volumes
+    prices = [h.get("low", 0) for h in baseline_data if h.get("low") and h.get("low") > 0]
+    volumes = [h.get("volume", 0) for h in baseline_data if h.get("volume") is not None]
+    
+    if not prices:
+        return (0.0, 0.0)
+    
+    # Compute baseline price
+    if use_median_for_price:
+        prices_sorted = sorted(prices)
+        mid = len(prices_sorted) // 2
+        if len(prices_sorted) % 2 == 0:
+            baseline_price = (prices_sorted[mid - 1] + prices_sorted[mid]) / 2.0
+        else:
+            baseline_price = prices_sorted[mid]
+    else:
+        baseline_price = sum(prices) / len(prices)
+    
+    # Compute baseline volume
+    if use_mean_for_volume:
+        baseline_volume = sum(volumes) / len(volumes) if volumes else 0.0
+    else:
+        volumes_sorted = sorted(volumes)
+        mid = len(volumes_sorted) // 2
+        if len(volumes_sorted) % 2 == 0:
+            baseline_volume = (volumes_sorted[mid - 1] + volumes_sorted[mid]) / 2.0 if volumes_sorted else 0.0
+        else:
+            baseline_volume = volumes_sorted[mid] if volumes_sorted else 0.0
+    
+    return (baseline_price, baseline_volume)
+
+def compute_dump_metrics(
+    current_low: float,
+    current_high: float,
+    current_volume: int,
+    history: List[Dict],
     buy_limit: int
-) -> float:
+) -> Dict:
+    """
+    Compute all dump-related metrics for an item.
+    
+    This function computes:
+    - drop_pct: Price drop percentage from baseline
+    - vol_spike_pct: Volume spike percentage vs baseline
+    - oversupply_pct: Current volume as percentage of buy limit
+    - slow_buy: Flag indicating slow buy speed
+    - one_gp_dump: Flag indicating price dropped to 1 GP
+    - margin_gp: Price margin (high - low)
+    - max_buy_4h: GE buy limit (max units per 4 hours)
+    - max_profit_gp: Maximum potential profit (margin_gp * max_buy_4h)
+    
+    Args:
+        current_low: Current low price
+        current_high: Current high price
+        current_volume: Current 5-minute volume
+        history: List of recent snapshots (ordered by timestamp ASC)
+        buy_limit: GE buy limit (max units per 4 hours)
+    
+    Returns:
+        Dict with all computed metrics, or None if insufficient data
+    """
+    config = DUMP_SCORING_CONFIG
+    
+    # Check minimum history requirement
+    min_history = config["thresholds"]["min_history_snapshots"]
+    if len(history) < min_history:
+        logger.debug(f"Insufficient history: {len(history)} < {min_history} snapshots")
+        return None
+    
+    # Validate current data
+    if current_low is None or current_high is None or current_low <= 0:
+        logger.debug(f"Invalid current price data: low={current_low}, high={current_high}")
+        return None
+    
+    # Compute baseline metrics
+    baseline_price, baseline_volume = compute_baseline_metrics(
+        history,
+        use_median_for_price=config["baseline"]["use_median_for_price"],
+        use_mean_for_volume=config["baseline"]["use_mean_for_volume"],
+        baseline_snapshots=config["baseline"]["baseline_snapshots"]
+    )
+    
+    if baseline_price <= 0:
+        logger.debug(f"Invalid baseline price: {baseline_price}")
+        return None
+    
+    # 1. drop_pct: Price drop percentage from baseline
+    # Formula: (baseline_price - current_low) / current_low * 100
+    # Negative values mean price increased (clamp to 0)
+    drop_pct = max(0.0, ((baseline_price - current_low) / current_low) * 100) if current_low > 0 else 0.0
+    
+    # 2. vol_spike_pct: Volume spike percentage vs baseline
+    # Formula: (current_volume / baseline_volume - 1) * 100
+    # Handle baseline_volume = 0 cleanly
+    if baseline_volume > 0:
+        vol_spike_pct = ((current_volume / baseline_volume) - 1.0) * 100.0
+    else:
+        # If baseline is 0, any volume is a spike
+        vol_spike_pct = 100.0 if current_volume > 0 else 0.0
+    
+    # Clamp to reasonable range (avoid extreme outliers)
+    vol_spike_pct = max(0.0, min(vol_spike_pct, 10000.0))  # Cap at 10000% spike
+    
+    # 3. oversupply_pct: Current volume as percentage of buy limit
+    # Formula: (current_volume / buy_limit) * 100
+    # Clamp to reasonable range
+    if buy_limit > 0:
+        oversupply_pct = min((current_volume / buy_limit) * 100.0, 10000.0)  # Cap at 10000%
+    else:
+        oversupply_pct = 0.0
+    
+    # 4. slow_buy flag: Volume is less than expected 5-minute volume
+    # Expected 5-minute volume = buy_limit / (4h * 12 periods per hour) = buy_limit / 48
+    # slow_buy = current_volume < threshold * expected_5m_volume
+    expected_5m_volume = buy_limit / 48.0 if buy_limit > 0 else 0.0
+    slow_buy_threshold = config["thresholds"]["slow_buy_volume_pct"] / 100.0
+    slow_buy = current_volume < (slow_buy_threshold * expected_5m_volume) if expected_5m_volume > 0 else False
+    
+    # 5. one_gp_dump flag: Price dropped to 1 GP
+    one_gp_dump = current_low <= config["thresholds"]["one_gp_dump_price"]
+    
+    # 6. margin_gp: Price margin (high - low), clamped at >= 0
+    margin_gp = max(0.0, current_high - current_low)
+    
+    # 7. max_buy_4h: Directly from metadata (GE buy limit)
+    max_buy_4h = buy_limit
+    
+    # 8. max_profit_gp: Maximum potential profit
+    # Formula: margin_gp * max_buy_4h
+    max_profit_gp = margin_gp * max_buy_4h
+    
+    return {
+        "drop_pct": drop_pct,
+        "vol_spike_pct": vol_spike_pct,
+        "oversupply_pct": oversupply_pct,
+        "slow_buy": slow_buy,
+        "one_gp_dump": one_gp_dump,
+        "margin_gp": margin_gp,
+        "max_buy_4h": max_buy_4h,
+        "max_profit_gp": max_profit_gp,
+        "baseline_price": baseline_price,
+        "baseline_volume": baseline_volume,
+    }
+
+def compute_dump_score(metrics: Dict) -> float:
     """
     Compute dump quality score (0-100) using weighted model.
     
-    Scoring Formula:
-    - 40% weight: Price drop percentage (how much price fell)
-    - 30% weight: Volume spike percentage (current volume vs expected baseline)
-    - 20% weight: Oversupply ratio (volume traded vs GE buy limit)
-    - 10% weight: Buy speed (trades per 5 minutes relative to limit)
+    This function uses the centralized DUMP_SCORING_CONFIG to compute
+    a weighted score from the provided metrics.
     
     Args:
-        prev_low: Previous period's low price (baseline for comparison)
-        curr_low: Current low price
-        curr_volume: Current 5-minute volume
-        avg_volume: Average volume over recent history (baseline)
-        buy_limit: Max buy per 4h (GE limit)
-        
+        metrics: Dict with keys: drop_pct, vol_spike_pct, oversupply_pct, max_profit_gp
+                (from compute_dump_metrics)
+    
     Returns:
         Score from 0-100, where:
         - 0-10: Iron tier (minimal dump)
         - 91-100: Diamond tier (exceptional dump opportunity)
     """
-    if prev_low <= 0 or curr_low <= 0:
+    if not metrics:
         return 0.0
     
-    # 1. Calculate price drop percentage (40% weight)
-    # Negative drop means price increased, so clamp to 0
-    drop_pct = max(0.0, ((prev_low - curr_low) / prev_low) * 100)
+    config = DUMP_SCORING_CONFIG
+    weights = config["weights"]
+    norm = config["normalization"]
     
-    # Normalize drop_pct to 0-40 points (40% weight)
-    # A 20% drop = 40 points (max for this component)
-    drop_score = min(drop_pct * 2.0, 40.0)
+    # 1. drop_pct component (weight: 40.0)
+    drop_pct = metrics.get("drop_pct", 0.0)
+    drop_score = min(drop_pct * norm["drop_pct_factor"], weights["drop_pct"])
     
-    # 2. Calculate volume spike percentage (30% weight)
-    # Expected 5-minute volume = average volume / (24h * 12 periods per hour)
-    expected_5m = avg_volume / (24 * 12) if avg_volume > 0 else 1
+    # 2. vol_spike_pct component (weight: 30.0)
+    vol_spike_pct = metrics.get("vol_spike_pct", 0.0)
+    vol_spike_score = min(vol_spike_pct * norm["vol_spike_pct_factor"], weights["vol_spike_pct"])
     
-    # Volume spike: how much current volume exceeds expected
-    vol_spike_pct = max(0.0, ((curr_volume - expected_5m) / max(expected_5m, 1)) * 100)
+    # 3. oversupply_pct component (weight: 20.0)
+    oversupply_pct = metrics.get("oversupply_pct", 0.0)
+    oversupply_score = min(oversupply_pct * norm["oversupply_pct_factor"], weights["oversupply_pct"])
     
-    # Normalize vol_spike_pct to 0-30 points (30% weight)
-    # A 100% spike (double expected) = 30 points (max for this component)
-    vol_spike_score = min(vol_spike_pct * 0.3, 30.0)
-    
-    # 3. Calculate oversupply ratio (20% weight)
-    # How much volume traded relative to buy limit
-    # If volume = buy_limit, that's 100% oversupply in 5 minutes
-    oversupply_pct = (curr_volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
-    
-    # Normalize oversupply_pct to 0-20 points (20% weight)
-    # 100% oversupply (volume = limit) = 20 points (max for this component)
-    oversupply_score = min(oversupply_pct * 0.2, 20.0)
-    
-    # 4. Calculate buy speed (10% weight)
-    # Trades per 5 minutes relative to limit
-    # Slow buy = lower score (good for "slow buy" flag, but lower overall score)
-    # Fast buy = higher score (indicates active dumping)
-    buy_speed_pct = (curr_volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
-    
-    # Normalize buy_speed_pct to 0-10 points (10% weight)
-    # 100% buy speed (volume = limit in 5 min) = 10 points (max for this component)
-    buy_speed_score = min(buy_speed_pct * 0.1, 10.0)
+    # 4. max_profit_gp component (weight: 10.0)
+    # Normalize profit to reference value
+    max_profit_gp = metrics.get("max_profit_gp", 0.0)
+    profit_normalized = (max_profit_gp / norm["max_profit_gp_reference"]) * norm["max_profit_gp_factor"]
+    profit_score = min(profit_normalized, weights["max_profit_gp"])
     
     # Combine weighted components
-    total_score = drop_score + vol_spike_score + oversupply_score + buy_speed_score
+    total_score = drop_score + vol_spike_score + oversupply_score + profit_score
     
     # Clamp to [0, 100]
     return max(0.0, min(100.0, total_score))
@@ -500,7 +712,7 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
     Analyze current dump/flip opportunities.
     
     This function detects true dumps (oversupply events) by analyzing:
-    - Price drops from previous periods
+    - Price drops from baseline period
     - Volume spikes vs expected baseline
     - Oversupply ratios (volume vs GE buy limit)
     - Buy speed (trades per 5 minutes)
@@ -513,21 +725,24 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
         
     Returns:
         List of dicts with dump analysis for each candidate item.
-        Each dict includes:
+        Each dict includes ALL metrics used in scoring for full explainability:
         - id (item_id): OSRS item ID
         - name: Item name
         - tier: Tier name ("iron", "copper", ..., "diamond")
         - emoji: Tier emoji
         - group: Tier group ("metals" or "gems")
         - score: Quality score (0-100)
-        - drop_pct: Price drop percentage
-        - vol_spike_pct: Volume spike percentage
+        - drop_pct: Price drop percentage from baseline
+        - vol_spike_pct: Volume spike percentage vs baseline
         - oversupply_pct: Oversupply percentage (volume vs buy limit)
-        - buy_speed: Buy speed percentage (volume vs limit per 5 min)
+        - slow_buy: Boolean flag (slow buy speed)
+        - one_gp_dump: Boolean flag (price dropped to 1 GP)
         - volume: Current 5-minute volume
         - high: Current high price
         - low: Current low price
+        - margin_gp: Price margin (high - low) in GP
         - max_buy_4h: GE buy limit (max units per 4 hours)
+        - max_profit_gp: Maximum potential profit (margin_gp * max_buy_4h)
         - flags: List of special flags (e.g., "slow_buy", "one_gp_dump", "super")
         - timestamp: ISO timestamp of snapshot
     """
@@ -538,7 +753,7 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
         with _cache_lock:
             current_time = time.time()
             if _opportunities_cache and (current_time - _cache_timestamp) < CACHE_TTL:
-                print(f"[DUMP_ENGINE] Returning cached opportunities ({len(_opportunities_cache)} items)")
+                logger.debug(f"Returning cached opportunities ({len(_opportunities_cache)} items)")
                 return _opportunities_cache.copy()
     
     try:
@@ -549,6 +764,7 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
         
         opportunities = []
         current_time = int(datetime.now().timestamp())
+        config = DUMP_SCORING_CONFIG
         
         for item_id_str, current_data in snapshot.items():
             item_id = int(item_id_str)
@@ -577,29 +793,31 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
             # This provides baseline for volume comparison
             history = get_recent_history(item_id, minutes=240)
             
-            # Need at least 2 snapshots to compare current vs previous
-            if len(history) < 2:
+            # Check minimum history requirement
+            min_history = config["thresholds"]["min_history_snapshots"]
+            if len(history) < min_history:
+                logger.debug(f"Item {item_id}: insufficient history ({len(history)} < {min_history})")
                 continue
             
-            # Calculate average volume over history (baseline)
-            avg_volume = sum(h.get("volume", 0) for h in history) / len(history) if history else 0
+            # Compute all dump metrics
+            metrics = compute_dump_metrics(
+                current_low=low,
+                current_high=high,
+                current_volume=volume,
+                history=history,
+                buy_limit=buy_limit
+            )
             
-            # Get previous low price (from second-to-last snapshot)
-            # This represents the "before" state for price drop calculation
-            prev_low = history[-2].get("low") if len(history) >= 2 else low
+            if not metrics:
+                logger.debug(f"Item {item_id}: failed to compute metrics")
+                continue
             
-            # Skip if no price drop (not a dump)
-            if prev_low <= 0 or low >= prev_low:
+            # Only consider items with price drop (true dump)
+            if metrics["drop_pct"] <= 0:
                 continue
             
             # Compute dump quality score (0-100)
-            score = compute_dump_score(
-                prev_low=prev_low,
-                curr_low=low,
-                curr_volume=volume,
-                avg_volume=avg_volume,
-                buy_limit=buy_limit
-            )
+            score = compute_dump_score(metrics)
             
             # Skip opportunities with score 0 (no dump detected)
             if score <= 0:
@@ -608,33 +826,17 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
             # Assign tier based on score
             tier_info = assign_tier(score)
             
-            # Calculate detailed metrics for display
-            drop_pct = ((prev_low - low) / prev_low * 100) if prev_low > 0 else 0
-            expected_5m = avg_volume / (24 * 12) if avg_volume > 0 else 1
-            vol_spike_pct = max(0.0, ((volume - expected_5m) / max(expected_5m, 1)) * 100)
-            oversupply_pct = (volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
-            buy_speed_pct = (volume / max(buy_limit, 1)) * 100 if buy_limit > 0 else 0
-            
-            # Calculate margin and profit metrics
-            margin_gp = high - low
-            max_buy_4h = buy_limit  # GE buy limit is already per 4 hours
-            max_profit_gp = margin_gp * max_buy_4h
-            
             # Determine special flags
             flags = []
-            # Slow buy: less than 50% of limit traded in 5 minutes
-            # This indicates a gradual dump (good for slow buyers)
-            if buy_speed_pct < 50:
+            if metrics["slow_buy"]:
                 flags.append("slow_buy")
-            # One GP dump: price dropped to 1 GP (often indicates panic selling)
-            if low == 1:
+            if metrics["one_gp_dump"]:
                 flags.append("one_gp_dump")
             # Super tier: Platinum or higher (score >= 51)
-            # These are exceptional opportunities
             if score >= 51:
                 flags.append("super")
             
-            # Build opportunity dict with all required fields
+            # Build opportunity dict with ALL metrics for explainability
             opportunity = {
                 "id": item_id,  # Primary ID field
                 "item_id": item_id,  # Also include for compatibility
@@ -643,21 +845,26 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
                 "emoji": tier_info["emoji"],
                 "group": tier_info["group"],
                 "score": round(score, 1),
-                "drop_pct": round(drop_pct, 1),
-                "vol_spike_pct": round(vol_spike_pct, 1),
-                "oversupply_pct": round(oversupply_pct, 1),
-                "buy_speed": round(buy_speed_pct, 1),  # Percentage, not absolute speed
+                # All underlying metrics (for explainability)
+                "drop_pct": round(metrics["drop_pct"], 1),
+                "vol_spike_pct": round(metrics["vol_spike_pct"], 1),
+                "oversupply_pct": round(metrics["oversupply_pct"], 1),
+                "slow_buy": metrics["slow_buy"],
+                "one_gp_dump": metrics["one_gp_dump"],
                 "volume": int(volume),
                 "high": int(high),
                 "low": int(low),
                 "buy": int(low),  # Alias for compatibility
                 "sell": int(high),  # Alias for compatibility
-                "margin_gp": int(margin_gp),
-                "max_buy_4h": int(max_buy_4h),
-                "max_profit_gp": int(max_profit_gp),
+                "margin_gp": int(metrics["margin_gp"]),
+                "max_buy_4h": int(metrics["max_buy_4h"]),
+                "max_profit_gp": int(metrics["max_profit_gp"]),
                 "flags": flags,
                 "limit": int(buy_limit),  # Legacy alias
-                "timestamp": datetime.fromtimestamp(current_data.get("timestamp", current_time)).isoformat() + "Z"
+                "timestamp": datetime.fromtimestamp(current_data.get("timestamp", current_time)).isoformat() + "Z",
+                # Additional explainability fields (optional, for debugging)
+                "baseline_price": round(metrics.get("baseline_price", 0), 1),
+                "baseline_volume": round(metrics.get("baseline_volume", 0), 1),
             }
             
             opportunities.append(opportunity)
@@ -670,13 +877,11 @@ def analyze_dumps(use_cache: bool = True) -> List[Dict]:
             _opportunities_cache = opportunities.copy()
             _cache_timestamp = time.time()
         
-        print(f"[DUMP_ENGINE] Analyzed {len(opportunities)} dump opportunities (cached)")
+        logger.info(f"Analyzed {len(opportunities)} dump opportunities (cached)")
         return opportunities
         
     except Exception as e:
-        print(f"[ERROR] analyze_dumps failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"analyze_dumps failed: {e}", exc_info=True)
         return []
 
 def run_cycle():
@@ -694,12 +899,12 @@ def run_cycle():
         List of dump opportunities (same format as analyze_dumps())
     """
     try:
-        print(f"[DUMP_ENGINE] Starting cycle at {datetime.now().isoformat()}")
+        logger.info(f"Starting cycle at {datetime.now().isoformat()}")
         
         # Fetch 5-minute snapshot
         snapshot = fetch_5m_snapshot()
         if not snapshot:
-            print("[DUMP_ENGINE] No snapshot data available")
+            logger.warning("No snapshot data available")
             return []
         
         # Record snapshot to database
@@ -708,13 +913,11 @@ def run_cycle():
         # Analyze dumps (force refresh, don't use cache)
         opportunities = analyze_dumps(use_cache=False)
         
-        print(f"[DUMP_ENGINE] Cycle complete: {len(opportunities)} opportunities found")
+        logger.info(f"Cycle complete: {len(opportunities)} opportunities found")
         return opportunities
         
     except Exception as e:
-        print(f"[ERROR] run_cycle failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"run_cycle failed: {e}", exc_info=True)
         return []
 
 if __name__ == "__main__":
@@ -725,4 +928,4 @@ if __name__ == "__main__":
         print(f"\nTop 5 opportunities:")
         for opp in opportunities[:5]:
             print(f"  {opp['emoji']} {opp['name']}: {opp['score']:.1f} ({opp['tier']})")
-
+            print(f"    drop_pct: {opp['drop_pct']:.1f}%, vol_spike: {opp['vol_spike_pct']:.1f}%, oversupply: {opp['oversupply_pct']:.1f}%")

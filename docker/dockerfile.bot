@@ -11,9 +11,9 @@ COPY discord-bot/ ./
 COPY discord-bot/cogs/ ./cogs/
 COPY discord-bot/utils/ ./utils/
 
-# Copy entrypoint script
+# Copy entrypoint script and ensure LF line endings
 COPY docker/entrypoint-bot.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Copy config.json.example into image (for auto-creation)
 COPY config.json.example /app/config.json.example

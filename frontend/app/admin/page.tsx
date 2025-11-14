@@ -20,6 +20,7 @@ export default function AdminPage() {
     enabled_tiers: [] as string[],
     alert_channel_id: '',
     role_ids_per_tier: {} as Record<string, string>,
+    max_alerts_per_interval: 1,
   })
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [settingsError, setSettingsError] = useState<string | null>(null)
@@ -175,6 +176,7 @@ export default function AdminPage() {
         enabled_tiers: config.enabled_tiers ?? [],
         alert_channel_id: config.alert_channel_id ?? '',
         role_ids_per_tier: config.role_ids_per_tier ?? {},
+        max_alerts_per_interval: config.max_alerts_per_interval ?? 1,
       })
     } catch (error: any) {
       console.error('Failed to load config:', error)
@@ -199,6 +201,7 @@ export default function AdminPage() {
         enabled_tiers: alertSettings.enabled_tiers,
         alert_channel_id: alertSettings.alert_channel_id || undefined,
         role_ids_per_tier: alertSettings.role_ids_per_tier,
+        max_alerts_per_interval: alertSettings.max_alerts_per_interval,
       })
       setSettingsSuccess(true)
       setTimeout(() => setSettingsSuccess(false), 3000)
@@ -570,6 +573,23 @@ export default function AdminPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-300 mb-2">
+                  Max Alerts per Interval (1-10)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={alertSettings.max_alerts_per_interval}
+                  onChange={(e) => setAlertSettings({ ...alertSettings, max_alerts_per_interval: parseInt(e.target.value) || 1 })}
+                  className="w-full px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+                <p className="text-xs text-dark-400 mt-1">
+                  Maximum number of alerts to send per time interval to prevent spam
+                </p>
               </div>
 
               {settingsError && (

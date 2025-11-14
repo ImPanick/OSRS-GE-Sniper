@@ -20,11 +20,22 @@ interface OSRSStatus {
 export default function DashboardPage() {
   const [dumps, setDumps] = useState<DumpItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
   const [osrsStatus, setOsrsStatus] = useState<OSRSStatus | null>(null)
   const [selectedFilter, setSelectedFilter] = useState<TierFilter | null>(null)
   const [watchedItemIds, setWatchedItemIds] = useState<Set<number>>(new Set())
-  const [guildId] = useState<string>('default') // TODO: Get from context or URL params
+  const [guildId] = useState<string>(() => {
+    // Try to get from URL params first, then localStorage, then default
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const urlGuildId = params.get('guild_id')
+      if (urlGuildId) return urlGuildId
+      const stored = localStorage.getItem('guild_id')
+      if (stored) return stored
+    }
+    return 'default'
+  })
 
   // Fetch watchlist on mount
   useEffect(() => {
@@ -43,6 +54,7 @@ export default function DashboardPage() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true)
+      setError(null)
       
       // Build query params from selected filter
       const params: any = { guild_id: guildId }
@@ -62,12 +74,13 @@ export default function DashboardPage() {
       setDumps(dumpData)
       setOsrsStatus(status)
       setLastUpdate(new Date())
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch data:', error)
+      setError(error.response?.data?.error || 'Failed to load dump opportunities. Please try again.')
     } finally {
       setLoading(false)
     }
-  }, [selectedFilter])
+  }, [selectedFilter, guildId])
 
   useEffect(() => {
     fetchData()
@@ -178,6 +191,17 @@ export default function DashboardPage() {
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-500"></div>
+          </div>
+        ) : error ? (
+          <div className="p-4 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-center">
+            <p className="font-semibold mb-2">Error loading data</p>
+            <p className="text-sm">{error}</p>
+            <button
+              onClick={fetchData}
+              className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+            >
+              Retry
+            </button>
           </div>
         ) : (
           <DumpsTable

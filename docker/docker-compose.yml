@@ -10,6 +10,28 @@ name: osrs-sniper
 #   - With environment: REPO_ROOT=/path docker-compose up
 
 services:
+  # PostgreSQL database service
+  postgres:
+    container_name: osrs-sniper-postgres
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-osrs_sniper}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-osrs_sniper_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-osrs_sniper}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - sniper-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-osrs_sniper}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
   # Cache updater - runs first to populate item cache
   cache-updater:
     container_name: osrs-sniper-cache-updater
@@ -23,11 +45,11 @@ services:
     networks:
       - sniper-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/utils/item_cache.json') else 1)"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   # Backend API service
   backend:
@@ -49,11 +71,13 @@ services:
       - FLASK_ENV=production
       # CONFIG_PATH is optional - backend will use /app/config.default.json if not set
       - CONFIG_PATH=${CONFIG_PATH:-}
-      - DB_PATH=/app/utils/history.db
+      - DB_URL=postgresql://${POSTGRES_USER:-osrs_sniper}:${POSTGRES_PASSWORD:-osrs_sniper_pass}@postgres:5432/${POSTGRES_DB:-osrs_sniper}
       - OSRS_API_USER_AGENT=${OSRS_API_USER_AGENT:-OSRS-GE-Sniper/1.0 (https://github.com/ImPanick/OSRS-GE-Sniper; contact@example.com)}
     depends_on:
-      cache-updater:
+      postgres:
         condition: service_healthy
+      cache-updater:
+        condition: service_started
     restart: unless-stopped
     networks:
       - sniper-network
@@ -127,13 +151,15 @@ services:
       # Uncomment the line below if you want to override the default config:
       # - ${REPO_ROOT:-..}/config.json:/repo/config.json:ro
     environment:
-      - DB_PATH=/app/utils/history.db
+      - DB_URL=postgresql://${POSTGRES_USER:-osrs_sniper}:${POSTGRES_PASSWORD:-osrs_sniper_pass}@postgres:5432/${POSTGRES_DB:-osrs_sniper}
       # CONFIG_PATH is optional - worker will use defaults if not set
       - CONFIG_PATH=${CONFIG_PATH:-}
       - OSRS_API_USER_AGENT=${OSRS_API_USER_AGENT:-OSRS-GE-Sniper/1.0 (https://github.com/ImPanick/OSRS-GE-Sniper; contact@example.com)}
     depends_on:
-      cache-updater:
+      postgres:
         condition: service_healthy
+      cache-updater:
+        condition: service_started
       backend:
         condition: service_healthy
     restart: unless-stopped
@@ -143,4 +169,8 @@ services:
 networks:
   sniper-network:
     driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
 

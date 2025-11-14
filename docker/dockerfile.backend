@@ -2,10 +2,11 @@
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install system dependencies (git for auto-updater, curl for health checks)
+# Install system dependencies (git for auto-updater, curl for health checks, netcat for DB health checks)
 RUN apt-get update && apt-get install -y \
     git \
     curl \
+    netcat-openbsd \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -31,9 +32,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./ 
 COPY backend/utils/ ./utils/
 
-# Copy entrypoint script
+# Copy entrypoint script and ensure LF line endings
 COPY docker/entrypoint-backend.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Copy config.json.example into image as default config
 COPY config.json.example /app/config.default.json

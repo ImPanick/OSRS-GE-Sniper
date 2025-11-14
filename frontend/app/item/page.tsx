@@ -18,6 +18,8 @@ interface ItemData {
   volume?: number
   max_buy_4h?: number
   limit?: number
+  margin_gp?: number
+  max_profit_gp?: number
   opportunity?: {
     tier?: string
     score?: number
@@ -212,7 +214,7 @@ export default function ItemPage() {
                 <div className="text-xs text-dark-400 mb-2">Margin (GP)</div>
                 <div className="text-2xl font-bold text-primary-400">
                   {formatGP(
-                    item.high && item.low ? item.high - item.low : null
+                    item.margin_gp ?? (item.high && item.low ? item.high - item.low : null)
                   )}
                 </div>
               </div>
@@ -220,9 +222,13 @@ export default function ItemPage() {
                 <div className="text-xs text-dark-400 mb-2">Max Profit (GP)</div>
                 <div className="text-2xl font-bold text-yellow-400">
                   {formatGP(
-                    item.high && item.low && item.max_buy_4h
-                      ? (item.high - item.low) * item.max_buy_4h
-                      : null
+                    item.max_profit_gp ?? (
+                      item.margin_gp && item.max_buy_4h
+                        ? item.margin_gp * item.max_buy_4h
+                        : item.high && item.low && item.max_buy_4h
+                        ? (item.high - item.low) * item.max_buy_4h
+                        : null
+                    )
                   )}
                 </div>
               </div>

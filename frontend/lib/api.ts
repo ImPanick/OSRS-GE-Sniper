@@ -40,14 +40,15 @@ export interface Item {
 }
 
 export interface DumpItem extends Item {
-  drop_pct: number
-  quality: string
-  quality_label: string
-  prev: number
-  max_profit_4h: number
-  realistic_profit: number
-  cost_per_limit: number
-  // New tier system fields
+  // Legacy fields (for backward compatibility)
+  drop_pct?: number
+  quality?: string
+  quality_label?: string
+  prev?: number
+  max_profit_4h?: number
+  realistic_profit?: number
+  cost_per_limit?: number
+  // Tier system fields
   tier?: string
   emoji?: string
   tier_emoji?: string
@@ -61,6 +62,11 @@ export interface DumpItem extends Item {
   margin_gp?: number
   max_profit_gp?: number
   timestamp?: string
+  // Additional fields
+  volume?: number
+  buy?: number
+  sell?: number
+  limit?: number
 }
 
 export interface SpikeItem extends Item {
@@ -242,12 +248,27 @@ export const apiClient = {
     return data
   },
 
-  getConfig: async (guildId: string) => {
+  getConfig: async (guildId: string): Promise<{
+    alert_channel_id?: string | null
+    enabled_tiers: string[]
+    min_score: number
+    min_margin_gp: number
+    role_ids_per_tier: Record<string, string>
+    min_tier_name?: string | null
+    max_alerts_per_interval: number
+  }> => {
     const { data } = await api.get(`/api/config/${guildId}`)
     return data
   },
 
-  saveConfig: async (guildId: string, config: any) => {
+  saveConfig: async (guildId: string, config: {
+    min_score?: number
+    min_margin_gp?: number
+    enabled_tiers?: string[]
+    alert_channel_id?: string
+    role_ids_per_tier?: Record<string, string>
+    max_alerts_per_interval?: number
+  }) => {
     const { data } = await api.post(`/api/config/${guildId}`, config)
     return data
   },

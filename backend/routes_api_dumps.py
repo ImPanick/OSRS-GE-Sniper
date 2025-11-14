@@ -5,10 +5,14 @@ NOTE: This module defines JSON APIs only. UI is handled exclusively by the Next.
 """
 from flask import Blueprint, jsonify, request
 from utils.shared import get_item_lock, get_item_data
-from utils.database import get_db_connection, get_recent_history, get_unified_guild_config
+from utils.database import get_db_session, db_transaction, get_recent_history, get_unified_guild_config
+from sqlalchemy import text
 from utils.item_metadata import get_item_meta, get_buy_limit
 from security import rate_limit, validate_json_payload, sanitize_guild_id, require_admin_key
-import sqlite3
+import os
+
+# Check if using Postgres
+USE_POSTGRES = os.getenv('DB_URL', '').startswith('postgresql://') or os.getenv('DB_URL', '').startswith('postgres://')
 
 bp = Blueprint('api_dumps', __name__, url_prefix='/api')
 
@@ -108,9 +112,13 @@ def api_dumps():
                 
                 # Filter by min_margin_gp
                 min_margin_gp = guild_config.get('min_margin_gp', 0)
-                # Calculate margin_gp if not present (use realistic_profit or max_profit_4h)
-                margin_gp = opp.get('margin_gp') or opp.get('realistic_profit') or opp.get('max_profit_4h', 0)
-                if margin_gp < min_margin_gp:
+                # Calculate margin_gp if not present
+                high = opp.get('high', 0)
+                low = opp.get('low', 0)
+                margin_gp = opp.get('margin_gp')
+                if margin_gp is None and high and low:
+                    margin_gp = high - low
+                if margin_gp is None or margin_gp < min_margin_gp:
                     continue
             
             # Filter by tier (manual filter, still works)
@@ -132,6 +140,22 @@ def api_dumps():
                     continue
             
             # Format opportunity (ensure all required fields are present)
+            # Compute buy_speed from oversupply_pct for backward compatibility
+            # buy_speed is essentially the same as oversupply_pct (volume vs limit per 5 min)
+            oversupply_pct = opp.get('oversupply_pct', 0.0)
+            buy_speed = oversupply_pct  # Same metric, different name for compatibility
+            
+            # Calculate margin_gp and max_profit_gp if not present
+            high = opp.get('high', 0)
+            low = opp.get('low', 0)
+            max_buy_4h = opp.get('max_buy_4h', 0) or opp.get('limit', 0)
+            margin_gp = opp.get('margin_gp')
+            if margin_gp is None and high and low:
+                margin_gp = high - low
+            max_profit_gp = opp.get('max_profit_gp')
+            if max_profit_gp is None and margin_gp and max_buy_4h:
+                max_profit_gp = margin_gp * max_buy_4h
+            
             formatted_opp = {
                 'id': opp.get('id') or opp.get('item_id'),
                 'item_id': opp.get('item_id') or opp.get('id'),  # For compatibility
@@ -140,20 +164,23 @@ def api_dumps():
                 'emoji': opp.get('emoji', '🔩'),
                 'group': opp.get('group', 'metals'),
                 'score': opp.get('score', 0.0),
+                # All underlying metrics (for explainability)
                 'drop_pct': opp.get('drop_pct', 0.0),
                 'vol_spike_pct': opp.get('vol_spike_pct', 0.0),
-                'oversupply_pct': opp.get('oversupply_pct', 0.0),
-                'buy_speed': opp.get('buy_speed', 0.0),
+                'oversupply_pct': oversupply_pct,
+                'buy_speed': buy_speed,  # Backward compatibility (same as oversupply_pct)
+                'slow_buy': opp.get('slow_buy', False),
+                'one_gp_dump': opp.get('one_gp_dump', False),
                 'volume': opp.get('volume', 0),
-                'high': opp.get('high', 0),
-                'low': opp.get('low', 0),
-                'buy': opp.get('buy') or opp.get('low', 0),  # Alias for compatibility
-                'sell': opp.get('sell') or opp.get('high', 0),  # Alias for compatibility
-                'margin_gp': opp.get('margin_gp', 0),
-                'max_buy_4h': opp.get('max_buy_4h', 0),
-                'max_profit_gp': opp.get('max_profit_gp', 0),
+                'high': high,
+                'low': low,
+                'buy': opp.get('buy') or low,  # Alias for compatibility
+                'sell': opp.get('sell') or high,  # Alias for compatibility
+                'margin_gp': margin_gp or 0,
+                'max_buy_4h': max_buy_4h,
+                'max_profit_gp': max_profit_gp or 0,
                 'flags': opp.get('flags', []),
-                'limit': opp.get('limit') or opp.get('max_buy_4h', 0),  # Legacy alias
+                'limit': max_buy_4h,  # Legacy alias
                 'timestamp': opp.get('timestamp', '')
             }
             opportunities.append(formatted_opp)
@@ -340,22 +367,31 @@ def api_watchlist_add():
             else:
                 item_name = f'Item {item_id}'
         
-        conn = get_db_connection()
-        c = conn.cursor()
-        
         try:
-            c.execute("""
-                INSERT OR IGNORE INTO watchlists (guild_id, user_id, item_id, item_name)
-                VALUES (?, ?, ?, ?)
-            """, (guild_id, user_id, item_id, item_name))
-            conn.commit()
+            with db_transaction() as session:
+                if USE_POSTGRES:
+                    stmt = text("""
+                        INSERT INTO watchlists (guild_id, user_id, item_id, item_name)
+                        VALUES (:guild_id, :user_id, :item_id, :item_name)
+                        ON CONFLICT (guild_id, user_id, item_id) DO NOTHING
+                    """)
+                else:
+                    stmt = text("""
+                        INSERT OR IGNORE INTO watchlists (guild_id, user_id, item_id, item_name)
+                        VALUES (:guild_id, :user_id, :item_id, :item_name)
+                    """)
+                session.execute(stmt, {
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                    "item_id": item_id,
+                    "item_name": item_name
+                })
             
             return jsonify({
                 "success": True,
                 "message": "Item added to watchlist"
             })
-        except sqlite3.Error as e:
-            conn.rollback()
+        except Exception as e:
             return jsonify({"error": f"Database error: {str(e)}"}), 500
             
     except Exception as e:
@@ -379,21 +415,17 @@ def api_watchlist_remove():
         if not guild_id or not item_id:
             return jsonify({"error": "Missing required fields: guild_id, item_id"}), 400
         
-        conn = get_db_connection()
-        c = conn.cursor()
-        
-        if user_id:
-            c.execute("""
-                DELETE FROM watchlists
-                WHERE guild_id = ? AND user_id = ? AND item_id = ?
-            """, (guild_id, user_id, item_id))
-        else:
-            c.execute("""
-                DELETE FROM watchlists
-                WHERE guild_id = ? AND user_id IS NULL AND item_id = ?
-            """, (guild_id, item_id))
-        
-        conn.commit()
+        with db_transaction() as session:
+            if user_id:
+                session.execute(
+                    text("DELETE FROM watchlists WHERE guild_id = :guild_id AND user_id = :user_id AND item_id = :item_id"),
+                    {"guild_id": guild_id, "user_id": user_id, "item_id": item_id}
+                )
+            else:
+                session.execute(
+                    text("DELETE FROM watchlists WHERE guild_id = :guild_id AND user_id IS NULL AND item_id = :item_id"),
+                    {"guild_id": guild_id, "item_id": item_id}
+                )
         
         return jsonify({
             "success": True,
@@ -415,34 +447,31 @@ def api_watchlist_get():
         if not guild_id:
             return jsonify({"error": "Missing required parameter: guild_id"}), 400
         
-        conn = get_db_connection()
-        c = conn.cursor()
-        
-        if user_id:
-            c.execute("""
-                SELECT item_id, item_name
-                FROM watchlists
-                WHERE guild_id = ? AND user_id = ?
-                ORDER BY item_name
-            """, (guild_id, user_id))
-        else:
-            c.execute("""
-                SELECT item_id, item_name
-                FROM watchlists
-                WHERE guild_id = ?
-                ORDER BY item_name
-            """, (guild_id,))
-        
-        rows = c.fetchall()
-        watchlist = [
-            {
-                "item_id": row[0],
-                "item_name": row[1]
-            }
-            for row in rows
-        ]
-        
-        return jsonify(watchlist)
+        session = get_db_session()
+        try:
+            if user_id:
+                result = session.execute(
+                    text("SELECT item_id, item_name FROM watchlists WHERE guild_id = :guild_id AND user_id = :user_id ORDER BY item_name"),
+                    {"guild_id": guild_id, "user_id": user_id}
+                )
+            else:
+                result = session.execute(
+                    text("SELECT item_id, item_name FROM watchlists WHERE guild_id = :guild_id ORDER BY item_name"),
+                    {"guild_id": guild_id}
+                )
+            
+            rows = result.fetchall()
+            watchlist = [
+                {
+                    "item_id": row[0],
+                    "item_name": row[1]
+                }
+                for row in rows
+            ]
+            
+            return jsonify(watchlist)
+        finally:
+            session.close()
         
     except Exception as e:
         print(f"[ERROR] api_watchlist_get: {e}")

@@ -145,13 +145,38 @@ Configuration is managed via the web dashboard at `/config/<guild_id>` or via Di
 
 ## Discord Commands
 
+### Slash Commands
+- `/item <name/id>` - Look up an item by name or ID
+- `/recipe <item>` - Get recipe information for an item
+- `/decant <potion>` - Compare potion doses by GP per dose
+- `/ping` - Check bot latency
 - `/dip` - View top dumps (buy opportunities)
 - `/pump` - View top spikes (sell opportunities)
 - `/flips [min_gp]` - View top profitable flips
-- `/sniper_config` - Open web dashboard for server configuration
+- `/sniper_config` - Open web dashboard for server configuration (Admin only)
+- `/sniper_debug` - Show bot configuration and status for this server (Admin only)
+- `/tiers` - Show tier configuration and role mappings
 - `/watch <item>` - Get DMs when item dumps/pumps
 - `/profit <gp>` - Log your flip profit
 - `/leaderboard` - View top flippers
+
+### Text Commands (prefix: !)
+- `!item <name/id>` - Look up an item by name or ID
+- `!recipe <item>` - Get recipe information for an item
+- `!decant <potion>` - Compare potion doses by GP per dose
+- `!ping` - Check bot latency
+- `!sniper_debug` - Show bot configuration and status for this server (Admin only)
+- `!help` - Show available commands
+
+### Alert System
+Alerts are automatically sent based on per-server configuration:
+- **Tier-based filtering**: Each server can configure which tiers trigger alerts (Iron through Diamond)
+- **Role mentions**: Configure Discord roles to ping for each tier
+- **Minimum thresholds**: Set minimum GP margin, score, and tier threshold
+- **Watchlist filtering**: Optionally only send alerts for items in the watchlist
+- **Channel routing**: Alerts are sent to the configured alert channel or routed by price tier
+
+Use `/sniper_debug` to view your server's current configuration and alert status.
 
 ## Web Dashboard
 
@@ -220,6 +245,25 @@ Each server can configure:
 - Minimum tier threshold for automatic alerts
 
 **For detailed information about how tiers are assigned, scoring algorithms, and filtering, see [TIER_SYSTEM.md](TIER_SYSTEM.md).**
+
+## Database
+
+The system uses a hardened database layer with support for PostgreSQL (Docker) and SQLite (local dev):
+
+- **Docker Deployment**: PostgreSQL 16 with connection pooling for concurrent access
+- **Local Development**: SQLite (fallback if `DB_URL` not set)
+- **Schema**: Automatically created on first startup with proper constraints
+- **Data Retention**: Automatic cleanup of data older than 7 days
+- **Health Monitoring**: `/api/admin/db_health` endpoint for database status
+
+**Key Features:**
+- Thread-safe connection pooling
+- Transactional integrity for all writes
+- Bulk insert optimization for snapshots
+- Unique constraints prevent duplicate data
+- Automatic schema migration on startup
+
+**For detailed database configuration, schema documentation, and troubleshooting, see [DATABASE.md](DATABASE.md).**
 
 ## Architecture
 

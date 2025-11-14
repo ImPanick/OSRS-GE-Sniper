@@ -19,6 +19,20 @@ except ImportError:
 
 # Load config with fallback paths for Docker and local development
 # Priority: 1) CONFIG_PATH env var, 2) /repo/config.json (Docker), 3) relative paths (local dev)
+# Falls back to minimal defaults if no config file exists
+DEFAULT_CONFIG = {
+    "discord_token": "",
+    "backend_url": "http://backend:5000",
+    "admin_key": "",
+    "discord_webhook": "",
+    "thresholds": {
+        "margin_min": 100000,
+        "dump_drop_pct": 5,
+        "spike_rise_pct": 5,
+        "min_volume": 100
+    }
+}
+
 CONFIG_PATH = os.getenv('CONFIG_PATH')
 if not CONFIG_PATH:
     # Try Docker path first (/repo is mounted repo root)
@@ -36,8 +50,21 @@ if not CONFIG_PATH:
 print(f"[BOT] Loading config from: {CONFIG_PATH}")
 print(f"[BOT] Config file exists: {os.path.exists(CONFIG_PATH)}")
 
-with open(CONFIG_PATH, 'r') as f:
-    CONFIG = json.load(f)
+# Load config with graceful fallback to defaults
+CONFIG = DEFAULT_CONFIG.copy()
+if CONFIG_PATH and os.path.exists(CONFIG_PATH):
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            file_config = json.load(f)
+            CONFIG.update(file_config)
+            if "thresholds" in file_config:
+                CONFIG["thresholds"] = {**DEFAULT_CONFIG["thresholds"], **file_config["thresholds"]}
+        print(f"[BOT] Config loaded successfully from {CONFIG_PATH}")
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"[BOT] WARNING: Failed to load config from {CONFIG_PATH}: {e}")
+        print(f"[BOT] Using default configuration")
+else:
+    print(f"[BOT] No config file found, using default configuration")
 
 def decrypt_token(encrypted_token: str) -> str:
     """
@@ -102,6 +129,9 @@ bot.synced = False  # Track if slash commands have been synced
 # Tier configuration cache: guild_id -> {tier_name -> {role_id, enabled, group, min_score, max_score, emoji}}
 tier_configs = {}
 
+# Unified guild config cache: guild_id -> {alert_channel_id, enabled_tiers, min_score, min_margin_gp, role_ids_per_tier, min_tier_name, max_alerts_per_interval, last_updated}
+guild_config_cache = {}
+
 # Deduplication cache: (guild_id, item_id, tier, timestamp_bucket) -> sent
 # timestamp_bucket is rounded to nearest 5 minutes to prevent spam
 alert_dedupe_cache = set()
@@ -109,6 +139,100 @@ alert_dedupe_cache = set()
 # Alert settings cache: guild_id -> {min_margin_gp, min_score, enabled_tiers, max_alerts_per_interval, last_updated}
 alert_settings_cache = {}
 ALERT_SETTINGS_CACHE_TTL = 60  # Refresh cache every 60 seconds
+GUILD_CONFIG_CACHE_TTL = 60  # Refresh unified config cache every 60 seconds
+
+# Track last successful data fetches
+last_dump_fetch_time = None
+last_dump_fetch_success = False
+
+# Expose caches and state to bot instance for access from cogs
+bot.guild_config_cache = guild_config_cache
+bot.tier_configs = tier_configs
+bot.last_dump_fetch_time = last_dump_fetch_time
+bot.last_dump_fetch_success = last_dump_fetch_success
+
+def http_get_with_retry(url, timeout=5, max_retries=2, backoff=1):
+    """HTTP GET with retry logic and exponential backoff"""
+    import time
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.get(url, timeout=timeout)
+            return response
+        except requests.exceptions.Timeout:
+            if attempt < max_retries:
+                wait_time = backoff * (2 ** attempt)
+                print(f"[BOT] ⚠ Request timeout, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries + 1})")
+                time.sleep(wait_time)
+            else:
+                print(f"[BOT] ✗ Request failed after {max_retries + 1} attempts: timeout")
+                raise
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries:
+                wait_time = backoff * (2 ** attempt)
+                print(f"[BOT] ⚠ Request error: {e}, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries + 1})")
+                time.sleep(wait_time)
+            else:
+                print(f"[BOT] ✗ Request failed after {max_retries + 1} attempts: {e}")
+                raise
+    return None
+
+async def fetch_guild_config(guild_id, force_refresh=False):
+    """Fetch unified guild configuration from backend with caching"""
+    import time
+    
+    # Check cache first (unless force refresh)
+    if not force_refresh and guild_id in guild_config_cache:
+        cached = guild_config_cache[guild_id]
+        last_updated = cached.get('last_updated', 0)
+        if time.time() - last_updated < GUILD_CONFIG_CACHE_TTL:
+            return cached
+    
+    try:
+        response = http_get_with_retry(
+            f"{CONFIG['backend_url']}/api/config/{guild_id}",
+            timeout=5,
+            max_retries=2
+        )
+        if response and response.status_code == 200:
+            config = response.json()
+            config['last_updated'] = time.time()
+            guild_config_cache[guild_id] = config
+            return config
+        else:
+            # Return defaults if fetch fails
+            defaults = {
+                "alert_channel_id": None,
+                "enabled_tiers": [],
+                "min_score": 0,
+                "min_margin_gp": 0,
+                "role_ids_per_tier": {},
+                "min_tier_name": None,
+                "max_alerts_per_interval": 1,
+                "last_updated": time.time()
+            }
+            # Only cache defaults if we have a previous config (don't overwrite good config with defaults on first fetch)
+            if guild_id in guild_config_cache:
+                guild_config_cache[guild_id] = defaults
+            return defaults
+    except Exception as e:
+        print(f"[BOT] ⚠ Error fetching unified config for {guild_id}: {e}")
+        # Return cached config if available, otherwise defaults
+        if guild_id in guild_config_cache:
+            cached = guild_config_cache[guild_id]
+            print(f"[BOT] Using cached config for {guild_id} (last updated: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(cached.get('last_updated', 0)))})")
+            return cached
+        # Return defaults on error
+        defaults = {
+            "alert_channel_id": None,
+            "enabled_tiers": [],
+            "min_score": 0,
+            "min_margin_gp": 0,
+            "role_ids_per_tier": {},
+            "min_tier_name": None,
+            "max_alerts_per_interval": 1,
+            "last_updated": time.time()
+        }
+        return defaults
 
 async def fetch_alert_settings(guild_id, force_refresh=False):
     """Fetch alert settings for a guild from backend with caching"""
@@ -122,11 +246,12 @@ async def fetch_alert_settings(guild_id, force_refresh=False):
             return cached
     
     try:
-        response = requests.get(
+        response = http_get_with_retry(
             f"{CONFIG['backend_url']}/api/config/{guild_id}/alerts",
-            timeout=5
+            timeout=5,
+            max_retries=2
         )
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             settings = response.json()
             settings['last_updated'] = time.time()
             alert_settings_cache[guild_id] = settings
@@ -144,6 +269,11 @@ async def fetch_alert_settings(guild_id, force_refresh=False):
             return defaults
     except Exception as e:
         print(f"[BOT] ⚠ Error fetching alert settings for {guild_id}: {e}")
+        # Return cached settings if available, otherwise defaults
+        if guild_id in alert_settings_cache:
+            cached = alert_settings_cache[guild_id]
+            print(f"[BOT] Using cached alert settings for {guild_id}")
+            return cached
         # Return defaults on error
         defaults = {
             "min_margin_gp": 0,
@@ -250,13 +380,15 @@ async def collect_server_info(guild):
 async def on_ready():
     print(f"[BOT] ========================================")
     print(f"[BOT] {bot.user} ONLINE (ID: {bot.user.id})")
+    print(f"[BOT] Backend URL: {CONFIG.get('backend_url', 'NOT SET')}")
     print(f"[BOT] ========================================")
     
     # Load all cogs
     print(f"[BOT] Loading cogs...")
     loaded_cogs = []
     failed_cogs = []
-    for filename in ["flips", "dumps", "spikes", "watchlist", "stats", "config", "nightly", "item_lookup", "text_commands"]:
+    cog_list = ["flips", "dumps", "spikes", "watchlist", "stats", "config", "nightly", "item_lookup", "text_commands", "debug"]
+    for filename in cog_list:
         try:
             await bot.load_extension(f"cogs.{filename}")
             loaded_cogs.append(filename)
@@ -267,7 +399,9 @@ async def on_ready():
             import traceback
             traceback.print_exc()
     
-    print(f"[BOT] Loaded {len(loaded_cogs)}/{len(loaded_cogs) + len(failed_cogs)} cogs")
+    print(f"[BOT] Loaded {len(loaded_cogs)}/{len(cog_list)} cogs")
+    if failed_cogs:
+        print(f"[BOT] ⚠ Failed cogs: {', '.join([f[0] for f in failed_cogs])}")
     
     # Sync slash commands - try global sync first, then per-guild if needed
     if not bot.synced:
@@ -352,9 +486,12 @@ async def on_ready():
     except Exception as e:
         print(f"[BOT] ✗ Failed to start tiered_alerts: {e}")
     
+    # Log connected guilds
     print(f"[BOT] ========================================")
     print(f"[BOT] Bot is ready and operational!")
-    print(f"[BOT] Connected to {len(bot.guilds)} server(s)")
+    print(f"[BOT] Connected to {len(bot.guilds)} server(s):")
+    for guild in bot.guilds:
+        print(f"[BOT]   - {guild.name} (ID: {guild.id}, Members: {guild.member_count})")
     print(f"[BOT] ========================================")
 
 @bot.event
@@ -431,7 +568,10 @@ async def refresh_guild_configs():
         for guild in bot.guilds:
             guild_id = str(guild.id)
             try:
-                config = await fetch_guild_config(guild_id)
+                config = await fetch_guild_config(guild_id, force_refresh=True)
+                # Update cache
+                guild_config_cache[guild_id] = config
+                bot.guild_config_cache[guild_id] = config
                 print(f"[BOT] ✓ Refreshed config for {guild.name} ({guild_id})")
             except Exception as e:
                 print(f"[BOT] ⚠ Error refreshing config for {guild.name}: {e}")
@@ -446,7 +586,10 @@ async def before_refresh_guild_configs():
     for guild in bot.guilds:
         guild_id = str(guild.id)
         try:
-            config = await fetch_guild_config(guild_id)
+            config = await fetch_guild_config(guild_id, force_refresh=True)
+            # Update cache
+            guild_config_cache[guild_id] = config
+            bot.guild_config_cache[guild_id] = config
             print(f"[BOT] ✓ Loaded config for {guild.name} ({guild_id})")
         except Exception as e:
             print(f"[BOT] ⚠ Error loading config for {guild.name}: {e}")
@@ -493,16 +636,29 @@ async def before_load_tier_configs():
 @tasks.loop(seconds=30)  # Check for tiered alerts every 30 seconds
 async def tiered_alerts():
     """Tiered alert loop using new dump engine with watchlist filtering"""
+    global last_dump_fetch_time, last_dump_fetch_success
+    import time
+    
     try:
         # Get latest dump opportunities from new engine
         try:
-            response = requests.get(f"{CONFIG['backend_url']}/api/dumps", timeout=30)
-            if response.status_code != 200:
-                print(f"[BOT] ⚠ Failed to fetch dumps: HTTP {response.status_code}")
+            response = http_get_with_retry(f"{CONFIG['backend_url']}/api/dumps", timeout=30, max_retries=1)
+            if not response or response.status_code != 200:
+                print(f"[BOT] ⚠ Failed to fetch dumps: HTTP {response.status_code if response else 'No response'}")
+                last_dump_fetch_success = False
+                bot.last_dump_fetch_success = False
                 return
             dumps = response.json() or []
+            last_dump_fetch_time = time.time()
+            last_dump_fetch_success = True
+            # Update bot instance attributes
+            bot.last_dump_fetch_time = last_dump_fetch_time
+            bot.last_dump_fetch_success = last_dump_fetch_success
+            print(f"[BOT] ✓ Fetched {len(dumps)} dump opportunities from backend")
         except requests.exceptions.RequestException as e:
             print(f"[BOT] ⚠ Error fetching dumps from backend: {e}")
+            last_dump_fetch_success = False
+            bot.last_dump_fetch_success = False
             return
         
         if not dumps:
@@ -519,6 +675,7 @@ async def tiered_alerts():
                 # Get tier config for this guild (structure: {"tiers": [...], "min_tier_name": ...})
                 tier_config_data = tier_configs.get(guild_id, {})
                 if not tier_config_data:
+                    print(f"[BOT] ⚠ Skipping {guild.name} ({guild_id}): No tier config loaded")
                     continue  # Skip if no tier config loaded
                 
                 # Extract tier settings dict and min_tier_name
@@ -580,31 +737,49 @@ async def tiered_alerts():
                 
                 # Filter opportunities for this guild
                 alerts_sent = 0
+                opportunities_considered = 0
+                skip_reasons = {
+                    "tier_disabled": 0,
+                    "tier_not_enabled_list": 0,
+                    "score_too_low": 0,
+                    "margin_too_low": 0,
+                    "min_tier_not_met": 0,
+                    "not_in_watchlist": 0,
+                    "already_sent": 0,
+                    "no_channel": 0
+                }
                 
                 for opp in dumps:
+                    opportunities_considered += 1
                     if alerts_sent >= max_alerts_per_cycle:
                         break
                     
                     tier_name = opp.get('tier', '').lower()
                     tier_setting = tier_settings.get(tier_name)
+                    item_id = opp.get('id') or opp.get('item_id')
+                    item_name = opp.get('name', 'Unknown')
                     
                     # Skip if tier not enabled or not configured
                     if not tier_setting or not tier_setting.get('enabled', True):
+                        skip_reasons["tier_disabled"] += 1
                         continue
                     
                     # Check enabled_tiers filter (if configured)
                     if enabled_tiers_list and len(enabled_tiers_list) > 0:
                         if tier_name not in enabled_tiers_list:
+                            skip_reasons["tier_not_enabled_list"] += 1
                             continue  # Skip if tier not in enabled list
                     
                     # Check min_score filter
                     score = opp.get('score', 0)
                     if score < min_score:
+                        skip_reasons["score_too_low"] += 1
                         continue  # Skip if score below threshold
                     
                     # Check min_margin_gp filter (for dumps, check realistic_profit or max_profit_4h)
                     realistic_profit = opp.get('realistic_profit', 0) or opp.get('max_profit_4h', 0)
                     if realistic_profit < min_margin_gp:
+                        skip_reasons["margin_too_low"] += 1
                         continue  # Skip if profit margin below threshold
                     
                     # Check min-tier restriction (from unified config)
@@ -614,14 +789,15 @@ async def tiered_alerts():
                             min_idx = tier_order.index(min_tier_name.lower())
                             opp_idx = tier_order.index(tier_name)
                             if opp_idx < min_idx:
+                                skip_reasons["min_tier_not_met"] += 1
                                 continue
                         except ValueError:
                             pass
                     
                     # Watchlist filtering: send if item is in watchlist OR watchlist is empty (send all above min tier)
-                    item_id = opp.get('id') or opp.get('item_id')
                     if watchlist_items:  # If watchlist has items, only send alerts for watched items
                         if item_id not in watchlist_items:
+                            skip_reasons["not_in_watchlist"] += 1
                             continue  # Skip if not in watchlist
                     # If watchlist is empty, send all items that pass tier checks (already handled above)
                     
@@ -630,13 +806,13 @@ async def tiered_alerts():
                     dedupe_key = (guild_id, item_id, tier_name, timestamp_bucket)
                     
                     if dedupe_key in alert_dedupe_cache:
+                        skip_reasons["already_sent"] += 1
                         continue  # Already sent this alert
                     
                     # Mark as sent
                     alert_dedupe_cache.add(dedupe_key)
                     
                     # Build embed
-                    item_name = opp.get('name', 'Unknown')
                     item_id = item_id or opp.get('item_id', 0)
                     tier_emoji = opp.get('emoji', '')
                     tier_display = tier_name.capitalize()
@@ -734,20 +910,28 @@ async def tiered_alerts():
                             await channel.send(content=content, embed=embed)
                             alerts_sent += 1
                             total_alerts_sent += 1
-                            print(f"[BOT] ✓ Sent {tier_display} alert for {item_name} to {guild.name} (#{channel.name})")
+                            print(f"[BOT] ✓ Sent {tier_display} alert for {item_name} (ID: {item_id}) to {guild.name} (#{channel.name})")
                         except discord.Forbidden:
                             print(f"[BOT] ⚠ No permission to send message in {guild.name} (channel: {channel.name})")
+                            skip_reasons["no_channel"] += 1
                         except discord.HTTPException as e:
                             print(f"[BOT] ⚠ HTTP error sending alert to {guild.name}: {e}")
+                            skip_reasons["no_channel"] += 1
                         except Exception as e:
                             print(f"[BOT] ⚠ Error sending alert to {guild.name}: {e}")
                             import traceback
                             traceback.print_exc()
+                            skip_reasons["no_channel"] += 1
                     else:
+                        skip_reasons["no_channel"] += 1
                         print(f"[BOT] ⚠ No channel configured for {guild.name} (item: {item_name}, tier: {tier_display})")
                 
-                if alerts_sent > 0:
-                    print(f"[BOT] Sent {alerts_sent} alert(s) to {guild.name}")
+                # Log summary for this guild
+                if opportunities_considered > 0:
+                    skip_summary = ", ".join([f"{k}: {v}" for k, v in skip_reasons.items() if v > 0])
+                    print(f"[BOT] [{guild.name}] Considered {opportunities_considered} opportunities, sent {alerts_sent} alerts. Skips: {skip_summary if skip_summary else 'none'}")
+                elif alerts_sent > 0:
+                    print(f"[BOT] [{guild.name}] Sent {alerts_sent} alert(s)")
             except Exception as e:
                 print(f"[BOT] ⚠ Error processing alerts for {guild.name}: {e}")
                 import traceback

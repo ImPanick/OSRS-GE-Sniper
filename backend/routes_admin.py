@@ -14,7 +14,7 @@ from utils.database import (
     get_all_tiers, get_guild_tier_settings, get_guild_config,
     update_tier, update_guild_tier_setting, update_guild_config,
     get_guild_alert_settings, update_guild_alert_settings,
-    get_unified_guild_config
+    get_unified_guild_config, get_db_health, prune_old_data
 )
 from security import (
     rate_limit, validate_json_payload, require_admin_key,
@@ -1066,6 +1066,69 @@ def fetch_recent_cache():
         
     except Exception as e:
         print(f"[ERROR] fetch_recent_cache failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "ok": False,
+            "error": "Unexpected error occurred",
+            "message": str(e)
+        }), 500
+
+@bp.route('/api/admin/db_health', methods=['GET'])
+@require_admin_key()
+@rate_limit(max_requests=30, window=60)
+def api_db_health():
+    """Get database health status and statistics"""
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    try:
+        health = get_db_health()
+        return jsonify(health), 200 if health["status"] == "healthy" else 503
+    except Exception as e:
+        print(f"[ERROR] api_db_health failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e)
+        }), 503
+
+@bp.route('/api/admin/db_prune', methods=['POST'])
+@require_admin_key()
+@rate_limit(max_requests=10, window=300)
+def api_db_prune():
+    """Prune old data from database tables"""
+    if not is_local_request():
+        return jsonify({"error": "Access denied. Admin interface is LAN-only."}), 403
+    
+    try:
+        data = request.get_json(force=True) if request.is_json else {}
+        table_name = data.get('table', 'ge_prices_5m')
+        retention_days = data.get('retention_days', 7)
+        
+        # Validate parameters
+        valid_tables = ['prices', 'ge_prices_5m']
+        if table_name not in valid_tables:
+            return jsonify({"error": f"Invalid table. Must be one of: {valid_tables}"}), 400
+        
+        try:
+            retention_days = int(retention_days)
+            if retention_days < 1 or retention_days > 365:
+                return jsonify({"error": "retention_days must be between 1 and 365"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid retention_days parameter"}), 400
+        
+        deleted = prune_old_data(table_name, retention_days)
+        
+        return jsonify({
+            "ok": True,
+            "table": table_name,
+            "retention_days": retention_days,
+            "rows_deleted": deleted
+        })
+    except Exception as e:
+        print(f"[ERROR] api_db_prune failed: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({

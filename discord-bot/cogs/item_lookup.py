@@ -325,6 +325,12 @@ class ItemLookup(commands.Cog):
             traceback.print_exc()
             await interaction.followup.send(f"Error fetching recipe: {str(e)}", ephemeral=True)
 
+    @app_commands.command(name="ping", description="Check bot latency")
+    async def ping(self, interaction: discord.Interaction):
+        """Check bot latency"""
+        latency = round(self.bot.latency * 1000)
+        await interaction.response.send_message(f"🏓 Pong! Latency: {latency}ms", ephemeral=True)
+
     @app_commands.command(name="decant", description="Get decant information for a potion")
     @app_commands.describe(potion_name="Potion name (e.g., 'Prayer potion' or 'Prayer potion(4)')")
     async def decant(self, interaction: discord.Interaction, potion_name: str):
