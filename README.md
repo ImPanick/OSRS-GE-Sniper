@@ -1,4 +1,9 @@
-# OSRS GE Sniper Bot
+# OSRS GE Sniper
+## With Discord bot Integrations
+## Command Support
+## WebUI (Node.js, React, Tailwind)
+## **Self-Hostable**
+
 
 A Discord bot and web dashboard for tracking OSRS Grand Exchange price movements, dumps, spikes, and profitable flips.
 
