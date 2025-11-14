@@ -23,14 +23,14 @@ api.interceptors.request.use((config) => {
 export interface Item {
   id: number
   name: string
-  buy: number
-  sell: number
-  insta_buy: number
-  insta_sell: number
-  profit: number
-  roi: number
-  volume: number
-  limit: number
+  buy?: number
+  sell?: number
+  insta_buy?: number
+  insta_sell?: number
+  profit?: number
+  roi?: number
+  volume?: number
+  limit?: number
   high?: number
   low?: number
   risk_score?: number
@@ -39,7 +39,17 @@ export interface Item {
   liquidity_score?: number
 }
 
-export interface DumpItem extends Item {
+export interface DumpItem {
+  // Core item fields
+  id: number
+  name: string
+  // Price fields
+  buy?: number
+  sell?: number
+  high?: number
+  low?: number
+  insta_buy?: number
+  insta_sell?: number
   // Legacy fields (for backward compatibility)
   drop_pct?: number
   quality?: string
@@ -48,6 +58,8 @@ export interface DumpItem extends Item {
   max_profit_4h?: number
   realistic_profit?: number
   cost_per_limit?: number
+  profit?: number
+  roi?: number
   // Tier system fields
   tier?: string
   emoji?: string
@@ -64,9 +76,11 @@ export interface DumpItem extends Item {
   timestamp?: string
   // Additional fields
   volume?: number
-  buy?: number
-  sell?: number
   limit?: number
+  risk_score?: number
+  risk_level?: string
+  profitability_confidence?: number
+  liquidity_score?: number
 }
 
 export interface SpikeItem extends Item {

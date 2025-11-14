@@ -5,7 +5,7 @@ import { apiClient, DumpItem } from '@/lib/api'
 import { Card } from '@/components/Card'
 import { TierFilterGrid, TierFilter } from '@/components/TierFilterGrid'
 import { DumpsTable } from '@/components/DumpsTable'
-import { DumpMetricsCharts, DumpItem as ChartDumpItem } from '@/components/DumpMetricsCharts'
+import { DumpMetricsCharts, ChartDumpItem } from '@/components/DumpMetricsCharts'
 import { TrendingDown, Wifi, WifiOff, RefreshCw } from 'lucide-react'
 import { clsx } from 'clsx'
 
@@ -121,12 +121,12 @@ export default function DashboardPage() {
     return dumps.map((d) => ({
       id: d.id,
       name: d.name,
-      high: d.high,
-      low: d.low,
-      max_buy_4h: d.max_buy_4h,
-      margin_gp: d.margin_gp,
-      max_profit_gp: d.max_profit_gp,
-      score: d.score,
+      high: d.high ?? null,
+      low: d.low ?? null,
+      max_buy_4h: d.max_buy_4h ?? null,
+      margin_gp: d.margin_gp ?? null,
+      max_profit_gp: d.max_profit_gp ?? null,
+      score: d.score ?? null,
     }))
   }, [dumps])
 

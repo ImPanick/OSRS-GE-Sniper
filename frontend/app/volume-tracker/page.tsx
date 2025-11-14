@@ -45,24 +45,24 @@ export default function VolumeTrackerPage() {
     }
 
     if (filters.minVolume) {
-      filtered = filtered.filter(item => item.volume >= Number(filters.minVolume))
+      filtered = filtered.filter(item => (item.volume ?? 0) >= Number(filters.minVolume))
     }
 
     if (filters.maxVolume) {
-      filtered = filtered.filter(item => item.volume <= Number(filters.maxVolume))
+      filtered = filtered.filter(item => (item.volume ?? 0) <= Number(filters.maxVolume))
     }
 
     if (filters.minProfit) {
-      filtered = filtered.filter(item => item.profit >= Number(filters.minProfit))
+      filtered = filtered.filter(item => (item.profit ?? 0) >= Number(filters.minProfit))
     }
 
     if (filters.minROI) {
-      filtered = filtered.filter(item => item.roi >= Number(filters.minROI))
+      filtered = filtered.filter(item => (item.roi ?? 0) >= Number(filters.minROI))
     }
 
     filtered.sort((a, b) => {
-      const aVal = a[filters.sortBy as keyof Item] as number
-      const bVal = b[filters.sortBy as keyof Item] as number
+      const aVal = (a[filters.sortBy as keyof Item] as number) ?? 0
+      const bVal = (b[filters.sortBy as keyof Item] as number) ?? 0
       return filters.sortOrder === 'asc' ? aVal - bVal : bVal - aVal
     })
 
@@ -174,14 +174,14 @@ export default function VolumeTrackerPage() {
                         {item.name}
                       </a>
                     </td>
-                    <td className="px-4 py-3 text-sm text-dark-200">{item.volume.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-sm text-blue-400">{formatGP(item.buy)}</td>
-                    <td className="px-4 py-3 text-sm text-yellow-400">{formatGP(item.sell)}</td>
-                    <td className={`px-4 py-3 text-sm font-semibold ${item.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {formatGP(item.profit)}
+                    <td className="px-4 py-3 text-sm text-dark-200">{(item.volume ?? 0).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-sm text-blue-400">{formatGP(item.buy ?? 0)}</td>
+                    <td className="px-4 py-3 text-sm text-yellow-400">{formatGP(item.sell ?? 0)}</td>
+                    <td className={`px-4 py-3 text-sm font-semibold ${(item.profit ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {formatGP(item.profit ?? 0)}
                     </td>
-                    <td className={`px-4 py-3 text-sm font-semibold ${item.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {item.roi.toFixed(2)}%
+                    <td className={`px-4 py-3 text-sm font-semibold ${(item.roi ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {(item.roi ?? 0).toFixed(2)}%
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {item.risk_level && (

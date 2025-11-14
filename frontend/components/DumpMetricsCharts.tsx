@@ -10,17 +10,10 @@ import {
   ResponsiveContainer,
   Cell,
 } from 'recharts'
+import { DumpItem } from '@/lib/api'
 
-export type DumpItem = {
-  id: number
-  name: string
-  high: number | null | undefined
-  low: number | null | undefined
-  max_buy_4h: number | null | undefined
-  margin_gp?: number | null
-  max_profit_gp?: number | null
-  score?: number | null
-}
+// Re-export type alias for backward compatibility with dashboard
+export type ChartDumpItem = DumpItem
 
 interface DumpMetricsChartsProps {
   items: DumpItem[]
@@ -85,8 +78,11 @@ export function DumpMetricsCharts({ items }: DumpMetricsChartsProps) {
     const processed = items
       .map((item) => {
         // Use API-provided values if available, otherwise calculate
-        const margin = item.margin_gp ?? (item.high && item.low ? Math.max(0, item.high - item.low) : 0)
-        const maxProfit4h = item.max_profit_gp ?? (margin && item.max_buy_4h ? margin * item.max_buy_4h : 0)
+        const high = item.high ?? 0
+        const low = item.low ?? 0
+        const margin = item.margin_gp ?? (high && low ? Math.max(0, high - low) : 0)
+        const maxBuy4h = item.max_buy_4h ?? 0
+        const maxProfit4h = item.max_profit_gp ?? (margin && maxBuy4h ? margin * maxBuy4h : 0)
 
         return {
           name: truncateName(item.name),
