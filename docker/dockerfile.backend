@@ -35,8 +35,8 @@ COPY backend/utils/ ./utils/
 COPY docker/entrypoint-backend.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Copy config.json.example into image (for auto-creation)
-COPY config.json.example /app/config.json.example
+# Copy config.json.example into image as default config
+COPY config.json.example /app/config.default.json
 
 # Create directories for persistent data
 RUN mkdir -p server_configs utils

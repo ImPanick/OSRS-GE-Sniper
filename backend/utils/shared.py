@@ -6,7 +6,6 @@ import json
 import threading
 import requests
 import base64
-from datetime import datetime
 
 # Try to import cryptography for token decryption
 try:
@@ -25,32 +24,92 @@ dump_items = []
 spike_items = []
 all_items = []  # All items for volume tracker
 
-# Load config with fallback paths for Docker and local development
-# Priority: 1) CONFIG_PATH env var, 2) /repo/config.json (Docker), 3) relative paths (local dev)
-CONFIG_PATH = os.getenv('CONFIG_PATH')
-if not CONFIG_PATH:
-    # Try Docker path first (/repo is mounted repo root)
-    docker_path = '/repo/config.json'
-    if os.path.exists(docker_path):
-        CONFIG_PATH = docker_path
+# Default configuration values (used when no config file exists)
+DEFAULT_CONFIG = {
+    "discord_token": "",
+    "backend_url": "http://backend:5000",
+    "admin_key": "",
+    "discord_webhook": "",
+    "thresholds": {
+        "margin_min": 100000,
+        "dump_drop_pct": 5,
+        "spike_rise_pct": 5,
+        "min_volume": 100
+    }
+}
+
+def load_config():
+    """
+    Load configuration with robust fallback logic.
+    Priority:
+    1. CONFIG_PATH environment variable
+    2. /app/config.json (Docker internal default)
+    3. /app/config.default.json (Docker default file)
+    4. /repo/config.json (Docker mounted repo root)
+    5. Relative paths for local development
+    6. Hardcoded defaults
+    
+    Returns: (config_dict, config_path_used, config_source)
+    """
+    # Default config paths to try in order
+    DEFAULT_CONFIG_PATH = "/app/config.default.json"
+    USER_CONFIG_PATH = "/app/config.json"
+    
+    # Priority 1: CONFIG_PATH environment variable
+    config_path = os.getenv('CONFIG_PATH')
+    config_source = "env_var"
+    
+    if not config_path:
+        # Priority 2: Try Docker internal paths
+        if os.path.exists(USER_CONFIG_PATH):
+            config_path = USER_CONFIG_PATH
+            config_source = "docker_internal"
+        elif os.path.exists(DEFAULT_CONFIG_PATH):
+            config_path = DEFAULT_CONFIG_PATH
+            config_source = "docker_default"
+        else:
+            # Priority 3: Try Docker mounted repo path
+            docker_repo_path = '/repo/config.json'
+            if os.path.exists(docker_repo_path):
+                config_path = docker_repo_path
+                config_source = "docker_repo"
+            else:
+                # Priority 4: Try relative paths for local development
+                possible_paths = [
+                    os.path.join(os.path.dirname(__file__), '..', 'config.json'),
+                    os.path.join(os.path.dirname(__file__), 'config.json'),
+                    os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+                ]
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        config_path = path
+                        config_source = "local_dev"
+                        break
+    
+    # Load config from file if path exists
+    config = DEFAULT_CONFIG.copy()
+    if config_path and os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                file_config = json.load(f)
+                # Merge file config with defaults (file values take precedence)
+                config.update(file_config)
+                if "thresholds" in file_config:
+                    config["thresholds"] = {**DEFAULT_CONFIG["thresholds"], **file_config["thresholds"]}
+            print(f"[CONFIG] Loaded config from {config_path} (source: {config_source})")
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"[CONFIG] WARNING: Failed to load config from {config_path}: {e}")
+            print(f"[CONFIG] Using default configuration")
+            config_source = "defaults_fallback"
     else:
-        # Fall back to relative paths for local development
-        CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
-        if not os.path.exists(CONFIG_PATH):
-            CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
-        if not os.path.exists(CONFIG_PATH):
-            CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+        print(f"[CONFIG] No config file found, using default configuration")
+        config_source = "defaults"
+        config_path = None
+    
+    return config, config_path, config_source
 
-# Note: config.json auto-creation is handled by Docker entrypoint script
-# This ensures the file exists before Docker tries to mount it
-
-CONFIG = {}
-if os.path.exists(CONFIG_PATH):
-    try:
-        with open(CONFIG_PATH, 'r') as f:
-            CONFIG = json.load(f)
-    except (json.JSONDecodeError, IOError):
-        CONFIG = {}
+# Load configuration on module import
+CONFIG, CONFIG_PATH, CONFIG_SOURCE = load_config()
 
 # Decrypt token if encrypted (for backward compatibility with plain tokens)
 def _decrypt_token_if_needed(encrypted_token: str) -> str:
@@ -81,13 +140,8 @@ def _decrypt_token_if_needed(encrypted_token: str) -> str:
 if 'discord_token' in CONFIG:
     CONFIG['discord_token'] = _decrypt_token_if_needed(CONFIG['discord_token'])
 
-# Set default thresholds if not present
-if "thresholds" not in CONFIG:
-    CONFIG["thresholds"] = {}
-CONFIG["thresholds"].setdefault("margin_min", 100000)  # 100k profit (was 2M - too high!)
-CONFIG["thresholds"].setdefault("dump_drop_pct", 5)     # 5% drop (was 18% - too high!)
-CONFIG["thresholds"].setdefault("spike_rise_pct", 5)    # 5% rise (was 20% - too high!)
-CONFIG["thresholds"].setdefault("min_volume", 100)      # 100 volume (was 400 - reasonable)
+# Thresholds are already set in DEFAULT_CONFIG and merged during load_config()
+# No need to set defaults again here
 
 # Primary OSRS API (official)
 BASE = "https://prices.runescape.wiki/api/v1/osrs"

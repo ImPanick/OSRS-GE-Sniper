@@ -37,18 +37,21 @@ A Discord bot and web dashboard for tracking OSRS Grand Exchange price movements
      4. Generate invite link with `bot` and `applications.commands` scopes
      5. Invite bot to your server with required permissions
 
-3. **No manual configuration needed!** The Docker setup automatically creates `config.json` if it doesn't exist.
+3. **No manual configuration needed!** The backend uses default configuration and will start successfully even without a `config.json` file.
 
 4. **Deploy with Docker**
    ```bash
    cd docker
    docker compose up -d --build
    ```
+   
+   **Important:** This will work immediately on a fresh clone - no `config.json` file is required! The backend uses built-in defaults and will start successfully.
 
 5. **Complete Setup via Web UI**
    - After services start, visit http://localhost:3000
    - You'll be redirected to the setup page if configuration is needed
    - Follow the setup wizard to configure your Discord bot token and other settings
+   - The setup page will save your configuration to `config.json` automatically
    
    This single command will:
    - Build all services (cache-updater, backend, frontend, bot)
@@ -105,12 +108,25 @@ For complete step-by-step instructions, see [DEPLOYMENT.md](DEPLOYMENT.md#discor
 
 ## Configuration
 
-### Config File
-Edit `config.json`:
+### Config File (Optional)
+
+**Important:** The backend will start successfully without a `config.json` file using built-in defaults. Configuration is optional and can be done via the web UI.
+
+If you want to manually configure `config.json` (advanced users):
 - `discord_token`: Your Discord bot token (from Discord Developer Portal)
 - `discord_webhook`: Optional webhook for backend notifications
-- `backend_url`: Backend URL (use Proxmox IP for production)
-- `admin_key`: Secure random string for admin API access
+- `backend_url`: Backend URL (default: `http://backend:5000` for Docker)
+- `admin_key`: Secure random string for admin API access (auto-generated if missing)
+
+**Default Configuration:**
+- The backend uses sensible defaults for all thresholds and settings
+- Missing `config.json` will NOT prevent the backend from starting
+- Configuration can be updated via the web UI at http://localhost:3000/setup
+
+**For Docker Users:**
+- To override the default config, create `config.json` in the repo root
+- Uncomment the config volume mount in `docker/docker-compose.yml` if needed
+- See `docker/README.md` for advanced configuration options
 
 ### Discord Bot Environment Variables
 The Discord bot can be configured via environment variables or `config.json`:

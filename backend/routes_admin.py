@@ -318,30 +318,41 @@ def setup_save_token():
         encrypted_token = encrypt_token(token, utils.shared.CONFIG.get('admin_key'))
         utils.shared.CONFIG['discord_token'] = encrypted_token
         
-        # Determine root config path (prioritize root config.json)
+        # Determine where to save config
+        # Priority: 1) CONFIG_PATH if writable, 2) /repo/config.json (Docker), 3) root config.json
+        save_paths = []
+        if CONFIG_PATH and os.path.exists(os.path.dirname(CONFIG_PATH)):
+            save_paths.append(CONFIG_PATH)
+        
+        # Try Docker repo path
+        docker_repo_path = '/repo/config.json'
+        if os.path.exists(os.path.dirname(docker_repo_path)):
+            save_paths.append(docker_repo_path)
+        
+        # Try root config.json
         root_config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
-        if not os.path.exists(root_config_path):
-            # Fallback to current CONFIG_PATH
-            root_config_path = CONFIG_PATH
+        if os.path.exists(os.path.dirname(root_config_path)):
+            save_paths.append(root_config_path)
         
-        # Save to root config.json (where bot reads from)
-        try:
-            with open(root_config_path, 'w') as f:
-                json.dump(utils.shared.CONFIG, f, indent=2)
-        except IOError:
-            return jsonify({"error": "Failed to save configuration"}), 500
-        
-        # Also save to backend config.json if different (for backend access)
-        if root_config_path != CONFIG_PATH:
+        # Save to first writable path
+        saved = False
+        for save_path in save_paths:
             try:
-                with open(CONFIG_PATH, 'w') as f:
+                with open(save_path, 'w') as f:
                     json.dump(utils.shared.CONFIG, f, indent=2)
-            except IOError:
-                pass  # Non-critical, root config is primary
+                saved = True
+                print(f"[CONFIG] Saved config to {save_path}")
+                break
+            except (IOError, OSError) as e:
+                print(f"[CONFIG] Failed to save to {save_path}: {e}")
+                continue
         
-        # Reload CONFIG from file
-        with open(root_config_path, 'r') as f:
-            utils.shared.CONFIG = json.load(f)
+        if not saved:
+            return jsonify({"error": "Failed to save configuration - no writable config path found"}), 500
+        
+        # Reload CONFIG from the saved file
+        from utils.shared import load_config
+        utils.shared.CONFIG, _, _ = load_config()
         
         return jsonify({"status": "saved"})
     except Exception as e:

@@ -24,9 +24,13 @@ Services start in the following order with health checks:
 
 ### Prerequisites
 
-**None!** The Docker setup automatically creates `config.json` from `config.json.example` if it doesn't exist. Just run docker-compose and everything will be set up automatically.
+**None!** The backend uses built-in default configuration and will start successfully without any `config.json` file. Just run docker-compose and everything will be set up automatically.
 
-**Note**: After services start, visit http://localhost:3000 and use the **Setup page** to configure your Discord bot token and other settings. The setup page will save everything to `config.json` automatically.
+**Important**: 
+- **No `config.json` file is required** - the backend uses sensible defaults
+- After services start, visit http://localhost:3000 and use the **Setup page** to configure your Discord bot token and other settings
+- The setup page will save your configuration to `config.json` automatically (optional)
+- The backend will work perfectly fine even if `config.json` never exists
 
 ### Start Services
 
@@ -39,9 +43,11 @@ docker-compose up -d --build
 ```
 
 **Important**: 
-- `config.json` is automatically created if it doesn't exist (from `config.json.example`)
-- After services start, visit http://localhost:3000 to complete setup via the web UI
+- **No `config.json` file is required** - backend uses built-in defaults
+- The backend will start successfully on a fresh clone with zero configuration
+- After services start, visit http://localhost:3000 to complete setup via the web UI (optional)
 - The setup page will guide you through configuring your Discord bot token and other settings
+- Configuration is saved to `config.json` automatically when you use the setup page
 
 The docker-compose.yml uses environment variables with sensible defaults that work when run from the `docker/` directory. If you need to use absolute paths or run from a different location, create a `.env` file in the `docker/` directory (see `.env.example`).
 
@@ -108,7 +114,7 @@ docker-compose up -d --build
 These variables control where Docker looks for files. They default to relative paths (`../`) which work when running from the `docker/` directory:
 
 - `REPO_ROOT` - Repository root directory (default: `..`)
-- `CONFIG_FILE` - Path to config.json (default: `${REPO_ROOT}/config.json`)
+- `CONFIG_FILE` - Optional path to config.json (not required - backend uses defaults)
 - `BACKEND_UTILS` - Backend utils directory (default: `${REPO_ROOT}/backend/utils`)
 - `BACKEND_SERVER_CONFIGS` - Server configs directory (default: `${REPO_ROOT}/backend/server_configs`)
 - `DISCORD_BOT_DATA` - Discord bot data directory (default: `${REPO_ROOT}/discord-bot/data`)
@@ -122,12 +128,12 @@ To override these, create a `.env` file in the `docker/` directory (see `.env.ex
 
 #### Backend
 - `FLASK_ENV` - Flask environment (production)
-- `CONFIG_PATH` - Path to config.json inside container (`/app/config.json`)
+- `CONFIG_PATH` - Optional path to config.json (defaults to `/app/config.default.json` or built-in defaults)
 - `DB_PATH` - Path to database file (`/app/utils/history.db`)
 
 #### Bot
 - `BACKEND_URL` - Backend API URL (http://backend:5000)
-- `CONFIG_PATH` - Path to config.json inside container (`/app/config.json`)
+- `CONFIG_PATH` - Optional path to config.json (defaults to `/repo/config.json` if mounted, or built-in defaults)
 
 ## Troubleshooting
 
@@ -139,14 +145,16 @@ To override these, create a `.env` file in the `docker/` directory (see `.env.ex
 ### Backend not starting
 - Check if cache-updater completed: `docker-compose logs cache-updater`
 - Check backend logs: `docker-compose logs backend`
-- Verify config.json exists and is valid
+- **Note**: `config.json` is NOT required - backend uses built-in defaults
 - **Path issues**: If you see mount errors, ensure you're running `docker-compose` from the `docker/` directory, or create a `.env` file with absolute paths
 
-### config.json is a directory instead of a file
-This should no longer happen as the entrypoint automatically creates the file. If it does:
-1. **Stop Docker containers**: `docker-compose down`
-2. **Remove the directory**: `rm -rf ../config.json` (Linux/macOS) or `Remove-Item -Recurse -Force ..\config.json` (Windows)
-3. **Restart**: `docker-compose up -d` (entrypoint will create the file automatically)
+### Config File Issues
+- **Missing config.json**: This is normal and expected! The backend uses built-in defaults and will start successfully without `config.json`
+- **config.json is a directory**: If this happens:
+  1. **Stop Docker containers**: `docker-compose down`
+  2. **Remove the directory**: `rm -rf ../config.json` (Linux/macOS) or `Remove-Item -Recurse -Force ..\config.json` (Windows)
+  3. **Restart**: `docker-compose up -d`
+  4. The backend will work fine without the file - it's optional (entrypoint will create the file automatically)
 
 ### Services not connecting
 - Ensure all services are on the same network: `sniper-network`

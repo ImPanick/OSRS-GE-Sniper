@@ -132,7 +132,7 @@ def validate_json_payload(max_size: int = 10000):
                 data = request.get_json(force=True)
                 if data is None:
                     return jsonify({"error": "Invalid JSON"}), 400
-            except Exception as e:
+            except Exception:
                 return jsonify({"error": "Invalid JSON format"}), 400
             
             return f(*args, **kwargs)
@@ -182,31 +182,19 @@ def require_admin_key():
         @wraps(f)
         def decorated_function(*args, **kwargs):
             # Import CONFIG at runtime to avoid circular import
-            import sys
-            import os
-            import json
-            
-            # Get CONFIG_PATH from environment or default
-            CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))
-            if not os.path.exists(CONFIG_PATH):
-                CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
-            if not os.path.exists(CONFIG_PATH):
-                CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
-            
-            CONFIG = {}
-            if os.path.exists(CONFIG_PATH):
-                try:
-                    with open(CONFIG_PATH, 'r') as cfg_file:
-                        CONFIG = json.load(cfg_file)
-                except (json.JSONDecodeError, IOError):
-                    CONFIG = {}
+            from utils.shared import CONFIG
             
             admin_key = request.headers.get('X-Admin-Key')
             
             if not admin_key:
                 return jsonify({"error": "Missing admin key"}), 401
             
-            if admin_key != CONFIG.get('admin_key'):
+            # If admin_key is not set in config, allow any key (for initial setup)
+            config_admin_key = CONFIG.get('admin_key', '').strip()
+            if not config_admin_key:
+                return f(*args, **kwargs)
+            
+            if admin_key != config_admin_key:
                 return jsonify({"error": "Invalid admin key"}), 401
             
             return f(*args, **kwargs)
@@ -264,7 +252,6 @@ def safe_path_join(base: str, *paths: str) -> str:
     """
     Safely join paths, preventing directory traversal
     """
-    import os
     result = os.path.normpath(os.path.join(base, *paths))
     
     # Ensure result is within base directory
@@ -283,20 +270,13 @@ def _get_encryption_key(admin_key: str = None, save_if_new: bool = False) -> byt
         return None
     
     import json
-    CONFIG_PATH = os.getenv('CONFIG_PATH', os.path.join(os.path.dirname(__file__), '..', 'config.json'))
-    if not os.path.exists(CONFIG_PATH):
-        CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
-    if not os.path.exists(CONFIG_PATH):
-        CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+    from utils.shared import CONFIG, CONFIG_PATH
     
     # Try to get existing encryption key from config
     try:
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, 'r') as f:
-                config = json.load(f)
-                stored_key = config.get('_encryption_key')
-                if stored_key:
-                    return base64.urlsafe_b64decode(stored_key.encode())
+        stored_key = CONFIG.get('_encryption_key')
+        if stored_key:
+            return base64.urlsafe_b64decode(stored_key.encode())
     except Exception:
         pass
     
@@ -314,8 +294,8 @@ def _get_encryption_key(admin_key: str = None, save_if_new: bool = False) -> byt
         # Generate new random key if no admin_key available
         key = Fernet.generate_key()
     
-    # Save key to config if requested
-    if save_if_new:
+    # Save key to config if requested and config path is writable
+    if save_if_new and CONFIG_PATH:
         try:
             config = {}
             if os.path.exists(CONFIG_PATH):
